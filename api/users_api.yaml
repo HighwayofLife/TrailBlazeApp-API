@@ -1,0 +1,352 @@
+openapi: 3.0.3
+info:
+  title: TrailBlaze Users API
+  description: API for managing user profiles and data
+  version: 1.0.0
+servers:
+  - url: https://api.trailblaze.app/v1
+paths:
+  /users/me:
+    get:
+      summary: Get current user profile
+      description: Returns the profile of the currently authenticated user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+    put:
+      summary: Update current user profile
+      description: Update the profile of the currently authenticated user
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: User profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+        '422':
+          description: Validation error
+  /users/{id}:
+    get:
+      summary: Get user by ID
+      description: Returns a user profile by ID (limited public information)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPublic'
+        '404':
+          description: User not found
+  /users/me/events:
+    get:
+      summary: Get events associated with current user
+      description: Returns events the user has registered for
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [upcoming, past, all]
+            default: upcoming
+          description: Filter by event status
+      responses:
+        '200':
+          description: User events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserEvent'
+        '401':
+          description: Unauthorized
+  /users/me/notifications:
+    get:
+      summary: Get user notifications
+      description: Returns notifications for the current user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: read
+          in: query
+          schema:
+            type: boolean
+          description: Filter by read status
+      responses:
+        '200':
+          description: User notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+        '401':
+          description: Unauthorized
+    put:
+      summary: Mark notifications as read
+      description: Mark notifications as read for the current user
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notificationIds:
+                  type: array
+                  items:
+                    type: string
+                allNotifications:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Notifications marked as read
+        '401':
+          description: Unauthorized
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phoneNumber:
+          type: string
+        address:
+          $ref: '#/components/schemas/Address'
+        emergencyContact:
+          $ref: '#/components/schemas/EmergencyContact'
+        membershipNumbers:
+          type: object
+          properties:
+            aerc:
+              type: string
+              description: American Endurance Ride Conference number
+            pner:
+              type: string
+              description: Pacific Northwest Endurance Rides number
+            others:
+              type: array
+              items:
+                type: object
+                properties:
+                  organization:
+                    type: string
+                  number:
+                    type: string
+        profileImageUrl:
+          type: string
+        bio:
+          type: string
+        preferences:
+          type: object
+          properties:
+            emailNotifications:
+              type: boolean
+            pushNotifications:
+              type: boolean
+            distanceUnit:
+              type: string
+              enum: [miles, kilometers]
+              default: miles
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    UserUpdate:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phoneNumber:
+          type: string
+        address:
+          $ref: '#/components/schemas/Address'
+        emergencyContact:
+          $ref: '#/components/schemas/EmergencyContact'
+        membershipNumbers:
+          type: object
+          properties:
+            aerc:
+              type: string
+            pner:
+              type: string
+            others:
+              type: array
+              items:
+                type: object
+                properties:
+                  organization:
+                    type: string
+                  number:
+                    type: string
+        bio:
+          type: string
+        preferences:
+          type: object
+          properties:
+            emailNotifications:
+              type: boolean
+            pushNotifications:
+              type: boolean
+            distanceUnit:
+              type: string
+              enum: [miles, kilometers]
+    UserPublic:
+      type: object
+      properties:
+        id:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        profileImageUrl:
+          type: string
+        bio:
+          type: string
+    Address:
+      type: object
+      properties:
+        street:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zipCode:
+          type: string
+        country:
+          type: string
+    EmergencyContact:
+      type: object
+      properties:
+        name:
+          type: string
+        relationship:
+          type: string
+        phoneNumber:
+          type: string
+    UserEvent:
+      type: object
+      properties:
+        event:
+          $ref: '#/components/schemas/EventBasic'
+        registration:
+          $ref: '#/components/schemas/Registration'
+        result:
+          $ref: '#/components/schemas/Result'
+    EventBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        date:
+          type: string
+        location:
+          type: string
+        organization:
+          type: string
+        imagePath:
+          type: string
+    Registration:
+      type: object
+      properties:
+        id:
+          type: string
+        distance:
+          type: string
+        status:
+          type: string
+          enum: [pending, confirmed, withdrawn, completed]
+        registrationDate:
+          type: string
+          format: date-time
+        horseId:
+          type: string
+        horseName:
+          type: string
+    Result:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [completed, pulled, disqualified, withdrawn]
+        position:
+          type: integer
+        totalRiders:
+          type: integer
+        timeCompleted:
+          type: string
+        notes:
+          type: string
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [event, system, registration]
+        title:
+          type: string
+        message:
+          type: string
+        isRead:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        data:
+          type: object
+          description: Additional context data specific to notification type
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

@@ -1,0 +1,221 @@
+openapi: 3.0.3
+info:
+  title: TrailBlaze Assistant API
+  description: API for AI-powered Q&A and ride assistance
+  version: 1.0.0
+servers:
+  - url: https://api.trailblaze.app/v1
+paths:
+  /assistant/question:
+    post:
+      summary: Ask a question to the AI assistant
+      description: Submit a question and get an AI-generated answer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - question
+              properties:
+                question:
+                  type: string
+                  description: The user's question
+                eventId:
+                  type: string
+                  description: Optional event ID for context-specific questions
+                horseId:
+                  type: string
+                  description: Optional horse ID for horse-specific questions
+      responses:
+        '200':
+          description: AI assistant response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantResponse'
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+  
+  /assistant/ride-tips:
+    get:
+      summary: Get ride preparation tips
+      description: Returns tips and recommendations for preparing for a specific ride
+      parameters:
+        - name: eventId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: riderExperience
+          in: query
+          schema:
+            type: string
+            enum: [beginner, intermediate, advanced]
+            default: intermediate
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ride preparation tips
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RideTips'
+        '400':
+          description: Invalid parameters
+        '401':
+          description: Unauthorized
+        '404':
+          description: Event not found
+  
+  /assistant/regulations:
+    get:
+      summary: Get ride regulations
+      description: Returns summarized regulations for specific organization
+      parameters:
+        - name: organization
+          in: query
+          required: true
+          schema:
+            type: string
+            description: Organization code (e.g., PNER, AERC)
+      responses:
+        '200':
+          description: Organization regulations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Regulations'
+        '400':
+          description: Invalid parameters
+        '404':
+          description: Organization not found
+
+components:
+  schemas:
+    AssistantResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+          description: AI-generated answer to the user's question
+        confidence:
+          type: number
+          format: float
+          description: Confidence score of the answer (0-1)
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+              url:
+                type: string
+              organization:
+                type: string
+        relatedQuestions:
+          type: array
+          items:
+            type: string
+            description: Related questions the user might want to ask
+    
+    RideTips:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        weatherForecast:
+          type: object
+          properties:
+            summary:
+              type: string
+            temperature:
+              type: object
+              properties:
+                low:
+                  type: number
+                high:
+                  type: number
+                unit:
+                  type: string
+                  default: F
+            precipitation:
+              type: number
+              description: Chance of precipitation (0-100%)
+        terrainTips:
+          type: array
+          items:
+            type: string
+        gearRecommendations:
+          type: array
+          items:
+            type: string
+        nutritionTips:
+          type: array
+          items:
+            type: string
+        horsePreparation:
+          type: array
+          items:
+            type: string
+        veterinaryConsiderations:
+          type: array
+          items:
+            type: string
+    
+    Regulations:
+      type: object
+      properties:
+        organization:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        lastUpdated:
+          type: string
+          format: date
+        riderRequirements:
+          type: array
+          items:
+            type: string
+        horseRequirements:
+          type: array
+          items:
+            type: string
+        vetCheckGuidelines:
+          type: array
+          items:
+            type: string
+        timingRules:
+          type: array
+          items:
+            type: string
+        divisions:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+              requirements:
+                type: string
+        documentUrl:
+          type: string
+          description: URL to the full regulations document
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

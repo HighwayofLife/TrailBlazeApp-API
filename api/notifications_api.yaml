@@ -1,0 +1,52 @@
+openapi: 3.0.0
+info:
+  title: TrailBlaze Notifications API
+  version: 1.0.0
+  description: API for managing user notifications and preferences
+paths:
+  /v1/notifications:
+    get:
+      summary: Get user notifications
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [read, unread, all]
+      responses:
+        '200':
+          description: List of notifications
+    
+  /v1/notifications/{notificationId}:
+    patch:
+      summary: Update notification status
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [read, archived]
+      responses:
+        '200':
+          description: Notification updated
+          
+  /v1/notifications/settings:
+    get:
+      summary: Get notification preferences
+      responses:
+        '200':
+          description: User notification settings
+    put:
+      summary: Update notification preferences
+      responses:
+        '200':
+          description: Settings updated

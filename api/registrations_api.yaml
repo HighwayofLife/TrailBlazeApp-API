@@ -1,0 +1,454 @@
+openapi: 3.0.3
+info:
+  title: TrailBlaze Registrations API
+  description: API for managing event registrations
+  version: 1.0.0
+servers:
+  - url: https://api.trailblaze.app/v1
+paths:
+  /registrations:
+    get:
+      summary: Get user's registrations
+      description: Returns a list of registrations for the current user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, confirmed, withdrawn, completed, all]
+            default: all
+          description: Filter by registration status
+      responses:
+        '200':
+          description: List of registrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Registration'
+        '401':
+          description: Unauthorized
+    post:
+      summary: Create a new registration
+      description: Register for an event
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationCreate'
+      responses:
+        '201':
+          description: Registration created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registration'
+        '400':
+          description: Invalid registration (e.g., already registered)
+        '401':
+          description: Unauthorized
+        '404':
+          description: Event or horse not found
+        '422':
+          description: Validation error
+
+  /registrations/{id}:
+    get:
+      summary: Get registration details
+      description: Returns details of a specific registration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Registration details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationDetail'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not the registration owner
+        '404':
+          description: Registration not found
+    put:
+      summary: Update registration
+      description: Update registration details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationUpdate'
+      responses:
+        '200':
+          description: Registration updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registration'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not the registration owner
+        '404':
+          description: Registration not found
+        '422':
+          description: Validation error
+    delete:
+      summary: Cancel registration
+      description: Cancel an event registration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Registration canceled
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not the registration owner
+        '404':
+          description: Registration not found
+
+  /events/{eventId}/registrations:
+    post:
+      summary: Register for specific event
+      description: Register for a specific event
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventRegistration'
+      responses:
+        '201':
+          description: Registration created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registration'
+        '400':
+          description: Invalid registration
+        '401':
+          description: Unauthorized
+        '404':
+          description: Event not found
+        '422':
+          description: Validation error
+  
+  /registrations/{id}/payment:
+    post:
+      summary: Process registration payment
+      description: Process payment for a registration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+      responses:
+        '200':
+          description: Payment processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          description: Payment failed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not the registration owner
+        '404':
+          description: Registration not found
+        '422':
+          description: Validation error
+
+components:
+  schemas:
+    RegistrationCreate:
+      type: object
+      required:
+        - eventId
+        - horseId
+        - distance
+      properties:
+        eventId:
+          type: string
+        horseId:
+          type: string
+        distance:
+          type: string
+        division:
+          type: string
+          enum: [open, limited distance, novice, junior]
+        weight:
+          type: string
+          enum: [featherweight, lightweight, middleweight, heavyweight]
+        accommodationRequests:
+          type: string
+        specialRequests:
+          type: string
+        additionalRiders:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdditionalRider'
+
+    Registration:
+      allOf:
+        - type: object
+          properties:
+            id:
+              type: string
+            userId:
+              type: string
+            status:
+              type: string
+              enum: [pending, confirmed, withdrawn, completed]
+            registrationDate:
+              type: string
+              format: date-time
+            paymentStatus:
+              type: string
+              enum: [unpaid, processing, paid, refunded]
+            fee:
+              type: number
+              description: Registration fee amount
+            event:
+              $ref: '#/components/schemas/EventBasic'
+        - $ref: '#/components/schemas/RegistrationCreate'
+
+    RegistrationDetail:
+      allOf:
+        - $ref: '#/components/schemas/Registration'
+        - type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/UserBasic'
+            horse:
+              $ref: '#/components/schemas/HorseBasic'
+            payments:
+              type: array
+              items:
+                $ref: '#/components/schemas/Payment'
+            formResponses:
+              type: object
+              additionalProperties: true
+              description: Dynamic form responses specific to the event
+
+    RegistrationUpdate:
+      type: object
+      properties:
+        horseId:
+          type: string
+        distance:
+          type: string
+        division:
+          type: string
+          enum: [open, limited distance, novice, junior]
+        weight:
+          type: string
+          enum: [featherweight, lightweight, middleweight, heavyweight]
+        accommodationRequests:
+          type: string
+        specialRequests:
+          type: string
+        status:
+          type: string
+          enum: [pending, confirmed, withdrawn]
+        additionalRiders:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdditionalRider'
+
+    EventRegistration:
+      type: object
+      required:
+        - horseId
+        - distance
+      properties:
+        horseId:
+          type: string
+        distance:
+          type: string
+        division:
+          type: string
+          enum: [open, limited distance, novice, junior]
+        weight:
+          type: string
+          enum: [featherweight, lightweight, middleweight, heavyweight]
+        accommodationRequests:
+          type: string
+        specialRequests:
+          type: string
+        additionalRiders:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdditionalRider'
+        formResponses:
+          type: object
+          additionalProperties: true
+          description: Dynamic form responses specific to the event
+
+    EventBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        date:
+          type: string
+        location:
+          type: string
+        organization:
+          type: string
+        imagePath:
+          type: string
+
+    UserBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+        profileImageUrl:
+          type: string
+
+    HorseBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        breed:
+          type: string
+        age:
+          type: integer
+        color:
+          type: string
+        profileImageUrl:
+          type: string
+
+    AdditionalRider:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+        relationship:
+          type: string
+          description: Relationship to primary rider
+
+    PaymentRequest:
+      type: object
+      required:
+        - paymentMethodId
+        - amount
+      properties:
+        paymentMethodId:
+          type: string
+          description: ID of the payment method (e.g., credit card)
+        amount:
+          type: number
+          description: Amount to pay
+        savePaymentMethod:
+          type: boolean
+          default: false
+
+    PaymentResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        transactionId:
+          type: string
+        paymentStatus:
+          type: string
+          enum: [processing, completed, failed]
+        receiptUrl:
+          type: string
+          format: uri
+
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+          default: USD
+        status:
+          type: string
+          enum: [processing, completed, failed, refunded]
+        paymentMethod:
+          type: string
+          description: Last 4 digits of card or payment method type
+        transactionId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        receiptUrl:
+          type: string
+          format: uri
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

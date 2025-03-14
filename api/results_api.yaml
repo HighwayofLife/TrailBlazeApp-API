@@ -1,0 +1,427 @@
+openapi: 3.0.3
+info:
+  title: TrailBlaze Results API
+  description: API for accessing event results and ride statistics
+  version: 1.0.0
+servers:
+  - url: https://api.trailblaze.app/v1
+paths:
+  /events/{eventId}/results:
+    get:
+      summary: Get results for an event
+      description: Returns all results for a specific event
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: distance
+          in: query
+          schema:
+            type: string
+          description: Filter by ride distance
+        - name: division
+          in: query
+          schema:
+            type: string
+          description: Filter by division
+      responses:
+        '200':
+          description: Event results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event:
+                    $ref: '#/components/schemas/EventBasic'
+                  distances:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        distance:
+                          type: string
+                        results:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/Result'
+        '404':
+          description: Event not found
+
+  /riders/{riderId}/results:
+    get:
+      summary: Get results for a rider
+      description: Returns all event results for a specific rider
+      parameters:
+        - name: riderId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Rider results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RiderResult'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Rider not found
+
+  /horses/{horseId}/results:
+    get:
+      summary: Get results for a horse
+      description: Returns all event results for a specific horse
+      parameters:
+        - name: horseId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Horse results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HorseResult'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Horse not found
+
+  /users/me/results:
+    get:
+      summary: Get results for current user
+      description: Returns all event results for the current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RiderResult'
+        '401':
+          description: Unauthorized
+
+  /events/{eventId}/leaderboard:
+    get:
+      summary: Get event leaderboard
+      description: Returns the leaderboard for an active event
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: distance
+          in: query
+          schema:
+            type: string
+          description: Filter by ride distance
+      responses:
+        '200':
+          description: Event leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leaderboard'
+        '404':
+          description: Event not found or not active
+
+  /events/{eventId}/statistics:
+    get:
+      summary: Get event statistics
+      description: Returns statistics for a completed event
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Event statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventStatistics'
+        '404':
+          description: Event not found or results not available
+
+components:
+  schemas:
+    Result:
+      type: object
+      properties:
+        position:
+          type: integer
+        rider:
+          $ref: '#/components/schemas/RiderBasic'
+        horse:
+          $ref: '#/components/schemas/HorseBasic'
+        distance:
+          type: string
+        status:
+          type: string
+          enum: [completed, pulled, disqualified, withdrawn]
+        completionTime:
+          type: string
+          description: Total time to complete the ride
+        pace:
+          type: string
+          description: Average pace per mile/km
+        bestCondition:
+          type: boolean
+          description: Whether this entry won Best Condition
+        vetScores:
+          type: object
+          properties:
+            preRide:
+              type: integer
+            finishLine:
+              type: integer
+            final:
+              type: integer
+        pulseRecovery:
+          type: integer
+          description: Heart rate recovery time in minutes
+        notes:
+          type: string
+
+    RiderResult:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        date:
+          type: string
+        location:
+          type: string
+        distance:
+          type: string
+        horse:
+          $ref: '#/components/schemas/HorseBasic'
+        position:
+          type: integer
+        totalEntries:
+          type: integer
+        status:
+          type: string
+          enum: [completed, pulled, disqualified, withdrawn]
+        completionTime:
+          type: string
+        bestCondition:
+          type: boolean
+        notes:
+          type: string
+
+    HorseResult:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        date:
+          type: string
+        location:
+          type: string
+        distance:
+          type: string
+        rider:
+          $ref: '#/components/schemas/RiderBasic'
+        position:
+          type: integer
+        totalEntries:
+          type: integer
+        status:
+          type: string
+          enum: [completed, pulled, disqualified, withdrawn]
+        completionTime:
+          type: string
+        bestCondition:
+          type: boolean
+        vetNotes:
+          type: string
+        vitals:
+          type: array
+          items:
+            $ref: '#/components/schemas/VitalRecord'
+
+    EventBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        date:
+          type: string
+        location:
+          type: string
+        organization:
+          type: string
+
+    RiderBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        profileImageUrl:
+          type: string
+
+    HorseBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        breed:
+          type: string
+        age:
+          type: integer
+        profileImageUrl:
+          type: string
+
+    VitalRecord:
+      type: object
+      properties:
+        checkpoint:
+          type: string
+          description: Name or location of the checkpoint
+        checkpointType:
+          type: string
+          enum: [pre-ride, on-trail, hold, finish]
+        timeRecorded:
+          type: string
+          format: date-time
+        heartRate:
+          type: integer
+        respiration:
+          type: integer
+        hydration:
+          type: integer
+        gutSounds:
+          type: string
+        notes:
+          type: string
+
+    Leaderboard:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        distance:
+          type: string
+        lastUpdated:
+          type: string
+          format: date-time
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              position:
+                type: integer
+              rider:
+                $ref: '#/components/schemas/RiderBasic'
+              horse:
+                $ref: '#/components/schemas/HorseBasic'
+              checkpoint:
+                type: string
+              timeAtCheckpoint:
+                type: string
+                format: date-time
+              status:
+                type: string
+                enum: [on-trail, hold, finished, pulled, disqualified, withdrawn]
+
+    EventStatistics:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        date:
+          type: string
+        totalParticipants:
+          type: integer
+        totalFinishers:
+          type: integer
+        completionRate:
+          type: number
+          format: float
+        distances:
+          type: array
+          items:
+            type: object
+            properties:
+              distance:
+                type: string
+              participants:
+                type: integer
+              finishers:
+                type: integer
+              completionRate:
+                type: number
+                format: float
+              averageTime:
+                type: string
+              fastestTime:
+                type: string
+              bestConditionHorse:
+                type: object
+                properties:
+                  horseId:
+                    type: string
+                  horseName:
+                    type: string
+                  riderId:
+                    type: string
+                  riderName:
+                    type: string
+        pullReasons:
+          type: object
+          properties:
+            lameness:
+              type: integer
+            metabolic:
+              type: integer
+            riderOption:
+              type: integer
+            overtime:
+              type: integer
+            other:
+              type: integer
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

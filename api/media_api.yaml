@@ -1,0 +1,44 @@
+openapi: 3.0.0
+info:
+  title: TrailBlaze Media API
+  version: 1.0.0
+  description: API for managing photos, videos, and GPS tracks
+paths:
+  /v1/media/upload:
+    post:
+      summary: Upload media files
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                type:
+                  type: string
+                  enum: [photo, video, gps]
+                eventId:
+                  type: string
+      responses:
+        '201':
+          description: Media uploaded successfully
+          
+  /v1/media/{eventId}:
+    get:
+      summary: Get media for an event
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [photo, video, gps, all]
+      responses:
+        '200':
+          description: Media files

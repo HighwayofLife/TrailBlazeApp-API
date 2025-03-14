@@ -1,0 +1,249 @@
+openapi: 3.0.3
+info:
+  title: TrailBlaze Events API
+  description: API for managing endurance riding events
+  version: 1.0.0
+servers:
+  - url: https://api.trailblaze.app/v1
+paths:
+  /events:
+    get:
+      summary: Get a list of events
+      description: Returns a paginated list of events that can be filtered by various criteria
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+          description: The page number to return
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+          description: The number of events to return per page
+        - name: organization
+          in: query
+          schema:
+            type: string
+          description: Filter by organizing body (e.g., PNER, AERC)
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter events starting from this date
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter events ending on this date
+        - name: location
+          in: query
+          schema:
+            type: string
+          description: Filter events by location (city, state)
+        - name: distance
+          in: query
+          schema:
+            type: string
+          description: Filter events by distance category
+      responses:
+        '200':
+          description: A list of events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Event'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          description: Bad request, invalid parameters
+        '401':
+          description: Unauthorized
+  /events/{id}:
+    get:
+      summary: Get event by ID
+      description: Returns a single event by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Event details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetail'
+        '404':
+          description: Event not found
+  /events/{id}/registrations:
+    get:
+      summary: Get registrations for an event
+      description: Returns a list of registrations for a specific event
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Event registrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Registration'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Event not found
+components:
+  schemas:
+    Event:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        date:
+          type: string
+          description: Human-readable date range (e.g., "June 15-16, 2024")
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        location:
+          type: string
+        distances:
+          type: array
+          items:
+            type: string
+        organization:
+          type: string
+        description:
+          type: string
+        imagePath:
+          type: string
+          format: uri
+          description: Path to event cover image
+    EventDetail:
+      allOf:
+        - $ref: '#/components/schemas/Event'
+        - type: object
+          properties:
+            rideManager:
+              type: string
+            contactEmail:
+              type: string
+            contactPhone:
+              type: string
+            website:
+              type: string
+            directions:
+              type: string
+            facilityDetails:
+              type: string
+            veterinarians:
+              type: array
+              items:
+                type: string
+            schedule:
+              type: array
+              items:
+                type: object
+                properties:
+                  time:
+                    type: string
+                  description:
+                    type: string
+            distanceDetails:
+              type: array
+              items:
+                type: object
+                properties:
+                  distance:
+                    type: string
+                  fee:
+                    type: number
+                  terrain:
+                    type: string
+                  elevationGain:
+                    type: string
+                  startTime:
+                    type: string
+            amenities:
+              type: array
+              items:
+                type: string
+    Registration:
+      type: object
+      properties:
+        id:
+          type: string
+        rider:
+          $ref: '#/components/schemas/User'
+        horse:
+          $ref: '#/components/schemas/Horse'
+        distance:
+          type: string
+        status:
+          type: string
+          enum: [pending, confirmed, withdrawn, completed]
+        registrationDate:
+          type: string
+          format: date-time
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        profileImageUrl:
+          type: string
+    Horse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        breed:
+          type: string
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+        perPage:
+          type: integer
+        currentPage:
+          type: integer
+        lastPage:
+          type: integer
+        from:
+          type: integer
+        to:
+          type: integer
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

@@ -1,0 +1,470 @@
+openapi: 3.0.3
+info:
+  title: TrailBlaze Horses API
+  description: API for managing horse profiles and records
+  version: 1.0.0
+servers:
+  - url: https://api.trailblaze.app/v1
+paths:
+  /horses:
+    get:
+      summary: Get list of horses
+      description: Returns a list of horses owned by the current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of horses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HorseBasic'
+        '401':
+          description: Unauthorized
+    post:
+      summary: Create a new horse
+      description: Create a new horse profile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HorseCreate'
+      responses:
+        '201':
+          description: Horse created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Horse'
+        '401':
+          description: Unauthorized
+        '422':
+          description: Validation error
+  /horses/{id}:
+    get:
+      summary: Get horse by ID
+      description: Returns detailed information about a horse
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Horse details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Horse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not owner of horse
+        '404':
+          description: Horse not found
+    put:
+      summary: Update horse
+      description: Update horse information
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HorseUpdate'
+      responses:
+        '200':
+          description: Horse updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Horse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not owner of horse
+        '404':
+          description: Horse not found
+        '422':
+          description: Validation error
+    delete:
+      summary: Delete horse
+      description: Delete a horse profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Horse deleted
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not owner of horse
+        '404':
+          description: Horse not found
+  /horses/{id}/events:
+    get:
+      summary: Get horse event history
+      description: Returns a list of events the horse has participated in
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Horse event history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HorseEvent'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not owner of horse
+        '404':
+          description: Horse not found
+  /horses/{id}/vitals:
+    get:
+      summary: Get horse vital records
+      description: Returns a history of vital recordings for a horse
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Horse vitals history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HorseVital'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not owner of horse
+        '404':
+          description: Horse not found
+    post:
+      summary: Add horse vital record
+      description: Add a new vital recording for a horse
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HorseVitalCreate'
+      responses:
+        '201':
+          description: Vital record added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HorseVital'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Not owner of horse
+        '404':
+          description: Horse not found
+        '422':
+          description: Validation error
+components:
+  schemas:
+    HorseBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        breed:
+          type: string
+        age:
+          type: integer
+        color:
+          type: string
+        profileImageUrl:
+          type: string
+    HorseCreate:
+      type: object
+      required:
+        - name
+        - breed
+      properties:
+        name:
+          type: string
+        nickname:
+          type: string
+        breed:
+          type: string
+        registrationNumbers:
+          type: object
+          properties:
+            aerc:
+              type: string
+            pner:
+              type: string
+            other:
+              type: array
+              items:
+                type: object
+                properties:
+                  organization:
+                    type: string
+                  number:
+                    type: string
+        dateOfBirth:
+          type: string
+          format: date
+        color:
+          type: string
+        markings:
+          type: string
+        gender:
+          type: string
+          enum: [mare, gelding, stallion]
+        height:
+          type: number
+          description: Height in hands
+        weight:
+          type: number
+          description: Weight in pounds
+        microchipNumber:
+          type: string
+        notes:
+          type: string
+    Horse:
+      allOf:
+        - $ref: '#/components/schemas/HorseCreate'
+        - type: object
+          properties:
+            id:
+              type: string
+            ownerUserId:
+              type: string
+            profileImageUrl:
+              type: string
+            totalMiles:
+              type: number
+            totalCompletions:
+              type: integer
+            bestConditionCount:
+              type: integer
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+    HorseUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        nickname:
+          type: string
+        breed:
+          type: string
+        registrationNumbers:
+          type: object
+          properties:
+            aerc:
+              type: string
+            pner:
+              type: string
+            other:
+              type: array
+              items:
+                type: object
+                properties:
+                  organization:
+                    type: string
+                  number:
+                    type: string
+        dateOfBirth:
+          type: string
+          format: date
+        color:
+          type: string
+        markings:
+          type: string
+        gender:
+          type: string
+          enum: [mare, gelding, stallion]
+        height:
+          type: number
+        weight:
+          type: number
+        microchipNumber:
+          type: string
+        notes:
+          type: string
+    HorseEvent:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        date:
+          type: string
+        location:
+          type: string
+        distance:
+          type: string
+        result:
+          type: string
+          enum: [completed, pulled, disqualified, withdrawn]
+        position:
+          type: integer
+        totalRiders:
+          type: integer
+        timeCompleted:
+          type: string
+        notes:
+          type: string
+        vetNotes:
+          type: string
+        vitalRecords:
+          type: array
+          items:
+            $ref: '#/components/schemas/HorseVital'
+        bestCondition:
+          type: boolean
+        rider:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+    HorseVital:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        heartRate:
+          type: integer
+          description: Heart rate in beats per minute
+        respiration:
+          type: integer
+          description: Respiration rate per minute
+        temperature:
+          type: number
+          description: Temperature in Fahrenheit
+        hydration:
+          type: integer
+          description: Hydration score (1-10)
+        gutSounds:
+          type: string
+          enum: [normal, reduced, absent, increased]
+        capillaryRefill:
+          type: number
+          description: Capillary refill time in seconds
+        mucousMembranes:
+          type: string
+        skinTent:
+          type: number
+          description: Skin tent time in seconds
+        notes:
+          type: string
+        recordedBy:
+          type: string
+          description: User ID of person who recorded this vital
+        eventId:
+          type: string
+          description: Associated event ID if recorded during an event
+        checkpointName:
+          type: string
+          description: Name of checkpoint if recorded during an event
+    HorseVitalCreate:
+      type: object
+      required:
+        - timestamp
+        - heartRate
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        heartRate:
+          type: integer
+        respiration:
+          type: integer
+        temperature:
+          type: number
+        hydration:
+          type: integer
+          minimum: 1
+          maximum: 10
+        gutSounds:
+          type: string
+          enum: [normal, reduced, absent, increased]
+        capillaryRefill:
+          type: number
+        mucousMembranes:
+          type: string
+        skinTent:
+          type: number
+        notes:
+          type: string
+        eventId:
+          type: string
+        checkpointName:
+          type: string
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

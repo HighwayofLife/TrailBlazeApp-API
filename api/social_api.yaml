@@ -1,0 +1,51 @@
+openapi: 3.0.0
+info:
+  title: TrailBlaze Social API
+  version: 1.0.0
+  description: API for social interactions between users
+paths:
+  /v1/social/follow/{userId}:
+    post:
+      summary: Follow a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successfully followed user
+          
+    delete:
+      summary: Unfollow a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successfully unfollowed user
+          
+  /v1/social/followers:
+    get:
+      summary: Get user's followers
+      responses:
+        '200':
+          description: List of followers
+          
+  /v1/social/following:
+    get:
+      summary: Get users being followed
+      responses:
+        '200':
+          description: List of followed users
+          
+  /v1/social/feed:
+    get:
+      summary: Get social activity feed
+      responses:
+        '200':
+          description: User activity feed

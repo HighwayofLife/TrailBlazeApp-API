@@ -1,0 +1,36 @@
+openapi: 3.0.0
+info:
+  title: TrailBlaze Feedback API
+  version: 1.0.0
+  description: API for user feedback and issue reporting
+paths:
+  /v1/feedback:
+    post:
+      summary: Submit feedback or report an issue
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [feedback, bug, trail-issue, event-issue]
+                content:
+                  type: string
+                relatedId:
+                  type: string
+                  description: ID of related event, trail, etc.
+                severity:
+                  type: string
+                  enum: [low, medium, high, critical]
+      responses:
+        '201':
+          description: Feedback submitted
+          
+  /v1/feedback/history:
+    get:
+      summary: Get user's submitted feedback
+      responses:
+        '200':
+          description: Feedback history

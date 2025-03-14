@@ -1,0 +1,210 @@
+openapi: 3.0.3
+info:
+  title: TrailBlaze Weather API
+  description: API for retrieving weather forecasts for ride locations
+  version: 1.0.0
+servers:
+  - url: https://api.trailblaze.app/v1
+paths:
+  /weather/forecast/{eventId}:
+    get:
+      summary: Get weather forecast for an event
+      description: Returns detailed weather forecast for an event location
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+            minimum: 1
+            maximum: 14
+          description: Number of days to forecast
+      responses:
+        '200':
+          description: Weather forecast
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeatherForecast'
+        '404':
+          description: Event not found or no location data available
+  
+  /weather/trailConditions/{eventId}:
+    get:
+      summary: Get trail conditions for an event
+      description: Returns current trail conditions based on recent weather and reports
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trail conditions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrailConditions'
+        '404':
+          description: Event not found or no trail data available
+
+components:
+  schemas:
+    WeatherForecast:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        location:
+          type: string
+        currentWeather:
+          type: object
+          properties:
+            temperature:
+              type: number
+            temperatureUnit:
+              type: string
+              enum: [F, C]
+              default: F
+            conditions:
+              type: string
+            windSpeed:
+              type: number
+            windDirection:
+              type: string
+            precipitation:
+              type: number
+              description: Precipitation in inches/mm
+            humidity:
+              type: number
+            uvIndex:
+              type: number
+            lastUpdated:
+              type: string
+              format: date-time
+        hourlyForecast:
+          type: array
+          items:
+            type: object
+            properties:
+              time:
+                type: string
+                format: date-time
+              temperature:
+                type: number
+              conditions:
+                type: string
+              precipitationChance:
+                type: number
+              windSpeed:
+                type: number
+        dailyForecast:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              high:
+                type: number
+              low:
+                type: number
+              sunrise:
+                type: string
+              sunset:
+                type: string
+              conditions:
+                type: string
+              precipitationChance:
+                type: number
+              precipitationAmount:
+                type: number
+        alerts:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              severity:
+                type: string
+              title:
+                type: string
+              description:
+                type: string
+              validFrom:
+                type: string
+                format: date-time
+              validTo:
+                type: string
+                format: date-time
+    
+    TrailConditions:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        lastUpdated:
+          type: string
+          format: date-time
+        trailStatus:
+          type: string
+          enum: [excellent, good, fair, poor, hazardous, closed]
+        summary:
+          type: string
+        conditions:
+          type: array
+          items:
+            type: object
+            properties:
+              trailSection:
+                type: string
+              status:
+                type: string
+              notes:
+                type: string
+        recentRainfall:
+          type: number
+          description: Recent rainfall in inches/mm
+        hazards:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [mud, water_crossing, fallen_tree, erosion, construction, other]
+              location:
+                type: string
+              description:
+                type: string
+              severity:
+                type: string
+                enum: [minor, moderate, severe]
+        riderReports:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              userName:
+                type: string
+              report:
+                type: string
+        recommendations:
+          type: array
+          items:
+            type: string

@@ -1,0 +1,286 @@
+openapi: 3.0.3
+info:
+  title: TrailBlaze Location API
+  description: API for location data and navigation to ride locations
+  version: 1.0.0
+servers:
+  - url: https://api.trailblaze.app/v1
+paths:
+  /locations/events/{eventId}:
+    get:
+      summary: Get location details for an event
+      description: Returns detailed location information including GPS coordinates and directions
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Location details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationDetail'
+        '404':
+          description: Event location not found
+  
+  /locations/directions:
+    get:
+      summary: Get directions to event location
+      description: Returns turn-by-turn directions from user location to event
+      parameters:
+        - name: eventId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: startLat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+        - name: startLng
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+        - name: transportMode
+          in: query
+          schema:
+            type: string
+            enum: [driving, towing]
+            default: towing
+          description: Mode of transport (towing accounts for trailer constraints)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Directions to event location
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Directions'
+        '400':
+          description: Invalid parameters
+        '404':
+          description: Event location not found
+
+  /locations/nearby:
+    get:
+      summary: Find nearby services and facilities
+      description: Returns lodging, feed stores, veterinarians, and other services near an event
+      parameters:
+        - name: eventId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: serviceType
+          in: query
+          schema:
+            type: string
+            enum: [lodging, feed_stores, veterinarians, farriers, fuel, groceries, all]
+            default: all
+        - name: radius
+          in: query
+          schema:
+            type: number
+            default: 25
+          description: Search radius in miles
+      responses:
+        '200':
+          description: List of nearby services
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NearbyService'
+        '404':
+          description: Event location not found
+
+components:
+  schemas:
+    LocationDetail:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        coordinates:
+          type: object
+          properties:
+            latitude:
+              type: number
+              format: double
+            longitude:
+              type: number
+              format: double
+        address:
+          type: object
+          properties:
+            street:
+              type: string
+            city:
+              type: string
+            state:
+              type: string
+            zipCode:
+              type: string
+            country:
+              type: string
+        entranceCoordinates:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              latitude:
+                type: number
+                format: double
+              longitude:
+                type: number
+                format: double
+              notes:
+                type: string
+        parkingInfo:
+          type: string
+          description: Information about trailer parking
+        campingInfo:
+          type: string
+          description: Information about camping arrangements
+        waterAvailability:
+          type: string
+          description: Information about water access for horses and participants
+        specialInstructions:
+          type: string
+          description: Special instructions for arriving at the event location
+        lastMileNotes:
+          type: string
+          description: Guidance for the final approach that may not be in GPS systems
+    
+    Directions:
+      type: object
+      properties:
+        origin:
+          type: object
+          properties:
+            latitude:
+              type: number
+              format: double
+            longitude:
+              type: number
+              format: double
+        destination:
+          type: object
+          properties:
+            latitude:
+              type: number
+              format: double
+            longitude:
+              type: number
+              format: double
+            name:
+              type: string
+        totalDistance:
+          type: number
+          description: Total distance in miles
+        totalDuration:
+          type: number
+          description: Total duration in minutes
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              instruction:
+                type: string
+              distance:
+                type: number
+              duration:
+                type: number
+              coordinates:
+                type: object
+                properties:
+                  latitude:
+                    type: number
+                    format: double
+                  longitude:
+                    type: number
+                    format: double
+        alternativeRoutes:
+          type: array
+          items:
+            type: object
+            properties:
+              reason:
+                type: string
+                description: Reason this alternative might be preferred
+              totalDistance:
+                type: number
+              totalDuration:
+                type: number
+        trailerWarnings:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [low_clearance, narrow_road, steep_grade, weight_limit, sharp_turn, unpaved]
+              description:
+                type: string
+              location:
+                type: object
+                properties:
+                  latitude:
+                    type: number
+                    format: double
+                  longitude:
+                    type: number
+                    format: double
+    
+    NearbyService:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [lodging, feed_store, veterinarian, farrier, fuel, groceries, other]
+        distance:
+          type: number
+          description: Distance in miles from event location
+        address:
+          type: string
+        coordinates:
+          type: object
+          properties:
+            latitude:
+              type: number
+              format: double
+            longitude:
+              type: number
+              format: double
+        phone:
+          type: string
+        website:
+          type: string
+        hours:
+          type: string
+        notes:
+          type: string
+          description: Additional information about the service
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
