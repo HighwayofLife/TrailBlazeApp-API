@@ -2,10 +2,14 @@
 
 Backend API for the TrailBlaze application, a mobile app for endurance and trail riders, focusing initially on the PNER (Pacific Northwest Endurance Rides) region.
 
+## Overview
+
+TrailBlazeApp-API is the backend service that powers the TrailBlaze mobile application. It provides event data, AI-powered Q&A capabilities, and other essential services for endurance and trail riders.
+
 ## Features
 
 - RESTful API for event data
-- AI-powered Q&A assistant using Gemini API
+- AI-powered Q&A assistant using Google Gemini 2.0 Flash API
 - Automated data scraping from multiple sources
 - PostgreSQL database for data storage
 
@@ -19,7 +23,7 @@ Backend API for the TrailBlaze application, a mobile app for endurance and trail
 - **AI Integration**: Google Gemini 2.0 Flash API
 - **Containerization**: Docker
 
-## Setup
+## Quick Start
 
 ### Prerequisites
 
@@ -27,145 +31,50 @@ Backend API for the TrailBlaze application, a mobile app for endurance and trail
 - Docker and Docker Compose (for containerized setup)
 - PostgreSQL (if running locally)
 
-### Environment Variables
+### Local Development
 
-Create a `.env` file in the root directory with the following variables:
+```bash
+# Clone the repository
+git clone https://github.com/highwayoflife/TrailBlazeApp-API.git
+cd TrailBlazeApp-API
 
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your configuration
+
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run database migrations
+alembic upgrade head
+
+# Start the development server
+uvicorn app.main:app --reload
 ```
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost/trailblaze
-GEMINI_API_KEY=your_gemini_api_key
-DEBUG=false
-LOG_LEVEL=INFO
-```
 
-### Local Development Setup
-
-1. Clone the repository:
-   ```
-   git clone https://github.com/highwayoflife/TrailBlazeApp-API.git
-   cd TrailBlazeApp-API
-   ```
-
-2. Create and activate a virtual environment:
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-4. Set up the database:
-   ```
-   alembic upgrade head
-   ```
-
-5. Run the server:
-   ```
-   uvicorn app.main:app --reload
-   ```
-
-6. Visit http://localhost:8000/docs for the API documentation
+Visit [http://localhost:8000/docs](http://localhost:8000/docs) to view the interactive API documentation.
 
 ### Docker Setup
 
-1. Build and run the containers:
-   ```
-   docker-compose up -d
-   ```
-
-2. The API will be available at http://localhost:8000
-
-## Project Structure
-
-```
-TrailBlazeApp-API/
-├── app/                      # Main application package
-│   ├── api/                  # API endpoints
-│   │   ├── openapi/         # OpenAPI schemas
-│   │   └── v1/              # API version 1 endpoints
-│   ├── crud/                 # Database CRUD operations
-│   ├── models/               # SQLAlchemy ORM models
-│   ├── schemas/              # Pydantic schemas
-│   ├── services/             # Business logic services
-│   ├── config.py             # Application configuration
-│   ├── database.py           # Database connection
-│   ├── logging_config.py     # Logging configuration
-│   ├── middleware.py         # FastAPI middleware
-│   └── main.py               # FastAPI application entry point
-├── alembic/                  # Database migrations
-├── docs/                     # Documentation
-├── logs/                     # Application logs
-├── scrapers/                 # Data scraping scripts
-├── tests/                    # Test suite
-├── .dockerignore             # Files to exclude from Docker
-├── .env.example              # Example environment variables
-├── alembic.ini               # Alembic configuration
-├── docker-compose.yml        # Docker Compose configuration
-├── Dockerfile                # Docker configuration
-└── requirements.txt          # Python dependencies
+```bash
+docker-compose up -d
 ```
 
-## Data Scraping Services
+## Documentation
 
-The TrailBlazeApp-API includes automated data scraping services that collect event information from various sources:
+For detailed documentation, please see the [docs folder](docs/README.md):
 
-- PNER website
-- Ride managers' websites
-- Facebook pages
-- AERC/EDRA listings
-
-These scraping services run on a schedule and update the central database with the latest event information.
-
-To run the scrapers manually:
-
-```
-cd scrapers
-python run_scrapers.py
-```
-
-## Development Workflow
-
-1. Create a new branch for your feature/fix
-2. Make your changes
-3. Run tests to ensure everything works: `pytest`
-4. Update the OpenAPI specifications if you modified the API
-5. Submit a pull request
-
-### API Development Guidelines
-
-When developing new API endpoints:
-
-1. Define the endpoint in the appropriate OpenAPI specification file
-2. Implement the endpoint in the FastAPI application
-3. Write tests for the new endpoint
-4. Update documentation as needed
-
-## Testing
-
-Run tests with pytest:
-
-```
-pytest
-```
-
-For coverage report:
-
-```
-pytest --cov=app
-```
-
-## Deployment
-
-The API is designed to be deployed as a containerized application. The `Dockerfile` and `docker-compose.yml` files provide the necessary configuration.
-
-For production deployments, consider:
-- Setting up CI/CD pipelines
-- Using managed database services
-- Implementing proper monitoring and alerting
-- Setting up a reverse proxy (e.g., Nginx) with HTTPS
+- [Architecture Overview](docs/architecture.md)
+- [API Reference](docs/api_reference.md)
+- [Development Guide](docs/development_guide.md)
+- [Testing Guide](docs/testing_guide.md)
+- [Deployment Guide](docs/deployment_guide.md)
+- [Maintenance Guide](docs/maintenance_guide.md)
+- [Data Scraping Guide](docs/data_scraping_guide.md)
 
 ## Contributing
 
@@ -177,4 +86,4 @@ For production deployments, consider:
 
 ## License
 
-[MIT License](LICENSE)
+This project is licensed under the [Apache License 2.0](LICENSE).
