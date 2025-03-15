@@ -1,0 +1,36 @@
+# FastAPI and related libraries
+fastapi>=0.103.1
+uvicorn>=0.23.2
+pydantic>=2.4.0
+pydantic-settings>=2.0.3
+python-dotenv>=1.0.0
+
+# Database
+sqlalchemy>=2.0.20
+alembic>=1.12.0
+psycopg2-binary>=2.9.9  # Replacing asyncpg temporarily
+
+# HTTP client
+requests>=2.31.0  # Adding as a fallback for aiohttp
+
+# Scraping
+beautifulsoup4>=4.12.2
+scrapy>=2.10.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.1
+httpx>=0.24.1
+
+# Logging
+python-json-logger>=2.0.7
+
+# Utilities
+python-multipart>=0.0.6
+email-validator>=2.0.0
+aiofiles>=23.1.0
+tenacity>=8.2.3
+
+# Comment out problematic packages - will install these later when compatible versions are available
+# asyncpg==0.28.0
+# aiohttp==3.8.5

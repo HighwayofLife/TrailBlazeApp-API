@@ -1,65 +1,44 @@
 # TrailBlazeApp-API
 
-Backend API and services for the TrailBlaze mobile application - a comprehensive platform for endurance and trail riders.
-
-## Overview
-
-TrailBlazeApp-API provides the server-side components that power the TrailBlaze mobile application. It includes a RESTful API for accessing event data, an AI-powered Q&A assistant, data scraping services, and other backend functionality essential for the mobile app.
-
-This API serves as the central hub for data aggregation from various sources (PNER website, ride managers' websites, Facebook pages, etc.) and provides structured access to this information for the TrailBlaze mobile app.
+Backend API for the TrailBlaze application, a mobile app for endurance and trail riders, focusing initially on the PNER (Pacific Northwest Endurance Rides) region.
 
 ## Features
 
-- **Event Data API**: Comprehensive endpoints for retrieving event information, including details like ride dates, locations, and requirements
-- **AI-powered Q&A Assistant**: Integration with Google's Gemini API to provide intelligent responses to rider questions
-- **Data Scraping Services**: Automated collection of event data from various sources
-- **Trip Planning Support**: APIs for calculating travel distances and times to ride locations
-- **Weather Integration**: Weather data for ride locations
-- **Authentication**: User account management and authentication services
+- RESTful API for event data
+- AI-powered Q&A assistant using Gemini API
+- Automated data scraping from multiple sources
+- PostgreSQL database for data storage
 
 ## Technology Stack
 
-- **Language**: Python 3.9+
 - **Framework**: FastAPI
-- **Database**: PostgreSQL
-- **AI Integration**: Gemini API (Google AI)
-- **Data Scraping**: Scrapy, Beautiful Soup
-- **Authentication**: JWT (JSON Web Tokens)
-- **Documentation**: OpenAPI 3.0 (Swagger)
+- **Database**: PostgreSQL with SQLAlchemy ORM
+- **Testing**: pytest
+- **Documentation**: OpenAPI (Swagger)
+- **Scraping**: Beautiful Soup, Scrapy
+- **AI Integration**: Google Gemini 2.0 Flash API
+- **Containerization**: Docker
 
-## Project Structure
-
-```
-TrailBlazeApp-API/
-├── api/                  # API specifications and documentation
-├── app/                  # Main application code
-│   ├── core/             # Core functionality, config, and utilities
-│   ├── db/               # Database models and connection management
-│   ├── endpoints/        # API route handlers
-│   ├── schemas/          # Pydantic models for request/response validation
-│   ├── services/         # Business logic services
-│   └── main.py           # Application entry point
-├── scrapers/             # Data scraping services
-│   ├── event_scraper/    # Scripts for scraping event data
-│   └── utils/            # Utilities for scraping and data processing
-├── tests/                # Test suite
-├── alembic/              # Database migration scripts
-├── docker/               # Docker configuration files
-├── .env.example          # Example environment variables
-├── requirements.txt      # Python dependencies
-└── README.md             # This file
-```
-
-## Getting Started
+## Setup
 
 ### Prerequisites
 
-- Python 3.9+
-- PostgreSQL 13+
-- Docker and Docker Compose (optional, for containerized deployment)
-- Google Cloud account (for Gemini API access)
+- Python 3.9+ 
+- Docker and Docker Compose (for containerized setup)
+- PostgreSQL (if running locally)
 
-### Installation
+### Environment Variables
+
+Create a `.env` file in the root directory with the following variables:
+
+```
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost/trailblaze
+GEMINI_API_KEY=your_gemini_api_key
+DEBUG=false
+LOG_LEVEL=INFO
+```
+
+### Local Development Setup
 
 1. Clone the repository:
    ```
@@ -78,49 +57,56 @@ TrailBlazeApp-API/
    pip install -r requirements.txt
    ```
 
-4. Copy the example environment file and fill in your values:
-   ```
-   cp .env.example .env
-   ```
-
-5. Set up the database:
+4. Set up the database:
    ```
    alembic upgrade head
    ```
 
-6. Run the development server:
+5. Run the server:
    ```
    uvicorn app.main:app --reload
    ```
 
-The API will be available at `http://localhost:8000`. API documentation is accessible at `http://localhost:8000/docs`.
+6. Visit http://localhost:8000/docs for the API documentation
 
-## Environment Variables
+### Docker Setup
 
-These environment variables need to be set in your `.env` file:
+1. Build and run the containers:
+   ```
+   docker-compose up -d
+   ```
 
-- `DATABASE_URL`: PostgreSQL connection string
-- `SECRET_KEY`: Secret key for JWT token generation
-- `GEMINI_API_KEY`: API key for Google's Gemini AI service
-- `ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins
-- `LOG_LEVEL`: Logging level (INFO, DEBUG, etc.)
+2. The API will be available at http://localhost:8000
 
-## API Documentation
+## Project Structure
 
-The API is documented using OpenAPI/Swagger. When the server is running, you can access:
-
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
-API specifications are also available in the `/api` directory as YAML files.
-
-### Key Endpoints
-
-- `/events`: Event calendar and details
-- `/assistant/question`: AI Q&A assistant
-- `/auth`: User authentication
-- `/location`: Navigation and location services
-- `/weather`: Weather information for ride locations
+```
+TrailBlazeApp-API/
+├── app/                      # Main application package
+│   ├── api/                  # API endpoints
+│   │   ├── openapi/         # OpenAPI schemas
+│   │   └── v1/              # API version 1 endpoints
+│   ├── crud/                 # Database CRUD operations
+│   ├── models/               # SQLAlchemy ORM models
+│   ├── schemas/              # Pydantic schemas
+│   ├── services/             # Business logic services
+│   ├── config.py             # Application configuration
+│   ├── database.py           # Database connection
+│   ├── logging_config.py     # Logging configuration
+│   ├── middleware.py         # FastAPI middleware
+│   └── main.py               # FastAPI application entry point
+├── alembic/                  # Database migrations
+├── docs/                     # Documentation
+├── logs/                     # Application logs
+├── scrapers/                 # Data scraping scripts
+├── tests/                    # Test suite
+├── .dockerignore             # Files to exclude from Docker
+├── .env.example              # Example environment variables
+├── alembic.ini               # Alembic configuration
+├── docker-compose.yml        # Docker Compose configuration
+├── Dockerfile                # Docker configuration
+└── requirements.txt          # Python dependencies
+```
 
 ## Data Scraping Services
 
@@ -157,53 +143,38 @@ When developing new API endpoints:
 3. Write tests for the new endpoint
 4. Update documentation as needed
 
+## Testing
+
+Run tests with pytest:
+
+```
+pytest
+```
+
+For coverage report:
+
+```
+pytest --cov=app
+```
+
 ## Deployment
 
-### Docker Deployment
+The API is designed to be deployed as a containerized application. The `Dockerfile` and `docker-compose.yml` files provide the necessary configuration.
 
-1. Build the Docker image:
-   ```
-   docker build -t trailblazeapp-api .
-   ```
-
-2. Run the container:
-   ```
-   docker run -p 8000:8000 --env-file .env trailblazeapp-api
-   ```
-
-### Cloud Deployment Options
-
-- **Serverless**: Azure Functions, AWS Lambda, or Google Cloud Functions
-- **Containerized**: Kubernetes, AWS ECS, or Google Cloud Run
-- **PaaS**: Heroku, Fly.io, or similar platforms
-
-## Monitoring
-
-The API includes monitoring and logging to track:
-
-- API usage statistics
-- Error rates and exceptions
-- AI usage (to keep within budgeted limits)
-- Data scraping effectiveness
-
-Logs are formatted for easy integration with cloud monitoring solutions.
+For production deployments, consider:
+- Setting up CI/CD pipelines
+- Using managed database services
+- Implementing proper monitoring and alerting
+- Setting up a reverse proxy (e.g., Nginx) with HTTPS
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature-name`
-3. Commit your changes: `git commit -am 'Add some feature'`
+3. Commit your changes: `git commit -am 'Add feature'`
 4. Push to the branch: `git push origin feature-name`
 5. Submit a pull request
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Contact
-
-For questions or support, please contact the project maintainers.
-
----
-
-TrailBlaze – Your Next Ride Starts Here.
+[MIT License](LICENSE)
