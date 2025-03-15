@@ -12,10 +12,12 @@ class Settings(BaseSettings):
     This centralizes all environment variables and configuration settings.
     Values can be overridden by environment variables with the same name.
     """
-    # Database settings
+    # Database settings - using Docker service name (db) when running in container
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", 
-        "postgresql+asyncpg://postgres:postgres@db/trailblaze"
+        "postgresql+asyncpg://postgres:postgres@db/trailblaze" 
+        if os.getenv("DOCKER_ENV") == "true" 
+        else "postgresql+asyncpg://postgres:postgres@localhost/trailblaze"
     )
     
     # API settings
