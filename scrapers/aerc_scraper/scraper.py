@@ -29,6 +29,7 @@ from app.logging_config import get_logger
 from app.schemas.event import EventCreate
 from app.crud.event import create_event, get_events
 from scrapers.aerc_scraper.schema import AERC_EVENT_SCHEMA
+from scrapers.aerc_scraper.metrics import ScraperMetrics
 
 # Configure logger
 logger = get_logger("scrapers.aerc")
@@ -44,6 +45,9 @@ class AERCScraper:
     BASE_URL = "https://aerc.org/wp-admin/admin-ajax.php"
     CALENDAR_URL = "https://aerc.org/calendar"
     CACHE_DIR = "cache"
+    MAX_RETRIES = 3
+    RETRY_DELAY = 5  # seconds
+    REQUEST_TIMEOUT = 30  # seconds
     
     def __init__(self):
         """Initialize the AERC scraper."""
@@ -51,7 +55,6 @@ class AERCScraper:
             'gemini-2.0-flash-lite',
             generation_config={"temperature": 0.3}
         )
-        # Add common headers to mimic a browser request
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -67,6 +70,8 @@ class AERCScraper:
         }
         # Ensure cache directory exists
         os.makedirs(self.CACHE_DIR, exist_ok=True)
+        # Initialize metrics
+        self.metrics = ScraperMetrics(start_time=datetime.now())
     
     def _get_cache_path(self, key: str) -> str:
         """Generate a cache file path for a given key."""
@@ -87,39 +92,82 @@ class AERCScraper:
         with open(cache_path, 'w') as cache_file:
             json.dump(data, cache_file)
     
+    async def _make_request(self, url: str, method: str = "GET", data: Dict = None, retry_count: int = 0) -> Optional[str]:
+        """Make an HTTP request with retry logic."""
+        self.metrics.http_requests += 1
+        
+        if retry_count >= self.MAX_RETRIES:
+            self.metrics.http_errors += 1
+            logger.error(f"Max retries ({self.MAX_RETRIES}) exceeded for {url}")
+            return None
+            
+        try:
+            timeout = aiohttp.ClientTimeout(total=self.REQUEST_TIMEOUT)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                request_func = session.post if method == "POST" else session.get
+                async with request_func(url, data=data, headers=self.headers) as response:
+                    if response.status == 429:  # Too Many Requests
+                        retry_after = int(response.headers.get('Retry-After', self.RETRY_DELAY))
+                        logger.warning(f"Rate limited. Waiting {retry_after} seconds before retry")
+                        await asyncio.sleep(retry_after)
+                        self.metrics.request_retries += 1
+                        return await self._make_request(url, method, data, retry_count + 1)
+                        
+                    elif response.status >= 500:  # Server errors
+                        logger.warning(f"Server error {response.status}. Retrying in {self.RETRY_DELAY} seconds")
+                        await asyncio.sleep(self.RETRY_DELAY)
+                        self.metrics.request_retries += 1
+                        return await self._make_request(url, method, data, retry_count + 1)
+                        
+                    elif response.status != 200:
+                        self.metrics.http_errors += 1
+                        logger.error(f"HTTP {response.status} error for {url}")
+                        return None
+                        
+                    return await response.text()
+                    
+        except asyncio.TimeoutError:
+            logger.warning(f"Request timeout. Retrying in {self.RETRY_DELAY} seconds")
+            await asyncio.sleep(self.RETRY_DELAY)
+            self.metrics.request_retries += 1
+            return await self._make_request(url, method, data, retry_count + 1)
+            
+        except Exception as e:
+            self.metrics.http_errors += 1
+            logger.error(f"Request error: {e}")
+            if retry_count < self.MAX_RETRIES:
+                self.metrics.request_retries += 1
+                await asyncio.sleep(self.RETRY_DELAY)
+                return await self._make_request(url, method, data, retry_count + 1)
+            return None
+
     async def extract_season_ids(self) -> List[str]:
         """Extract season IDs from the AERC calendar page."""
+        response_text = await self._make_request(self.CALENDAR_URL)
+        if not response_text:
+            return []
+            
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(self.CALENDAR_URL, headers=self.headers) as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to fetch AERC calendar page: {response.status}")
-                        return []
-                    
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
-                    
-                    # Find season checkboxes
-                    season_inputs = soup.select('input[name="season[]"]')
-                    season_ids = []
-                    
-                    for input_tag in season_inputs:
-                        season_id = input_tag.get('value')
-                        year_text = input_tag.find_next_sibling(string=True) or input_tag.parent.get_text()
-                        year_match = re.search(r'20\d{2}', year_text)
-                        
-                        if season_id and year_match:
-                            year = year_match.group(0)
-                            logger.info(f"Found season ID {season_id} for year {year}")
-                            season_ids.append(season_id)
-                    
-                    # Get current and next year IDs (at most 2)
-                    return season_ids[:2]
-        
+            soup = BeautifulSoup(response_text, 'html.parser')
+            season_inputs = soup.select('input[name="season[]"]')
+            season_ids = []
+            
+            for input_tag in season_inputs:
+                season_id = input_tag.get('value')
+                year_text = input_tag.find_next_sibling(string=True) or input_tag.parent.get_text()
+                year_match = re.search(r'20\d{2}', year_text)
+                
+                if season_id and year_match:
+                    year = year_match.group(0)
+                    logger.info(f"Found season ID {season_id} for year {year}")
+                    season_ids.append(season_id)
+            
+            return season_ids[:2]  # Get current and next year IDs
+            
         except Exception as e:
             logger.exception(f"Error extracting season IDs: {e}")
             return []
-    
+
     async def fetch_calendar_html(self, season_ids: List[str]) -> str:
         """Fetch calendar HTML from AERC website."""
         if not season_ids:
@@ -132,52 +180,38 @@ class AERCScraper:
             logger.info("Loaded calendar HTML from cache")
             return cached_html
 
-        try:
-            data = {
-                'action': 'aerc_calendar_form',
-                'calendar': 'calendar',
-                'country[]': ['United States', 'Canada'],
-                'within': '',
-                'zip': '',
-                'span[]': '#cal-span-season',
-                'season[]': season_ids,
-                'daterangefrom': '',
-                'daterangeto': '',
-                'distance[]': 'any',
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self.BASE_URL, data=data, headers=self.headers) as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to fetch AERC calendar data: {response.status}")
-                        return ""
-                    
-                    response_text = await response.text()
-                    
-                    # Debug: Print a portion of the response
-                    logger.info(f"Response preview (first 500 chars): {response_text[:500]}")
-                    logger.info(f"Response length: {len(response_text)}")
-                    
-                    # Parse the JSON response to extract the HTML
-                    try:
-                        json_data = json.loads(response_text)
-                        if 'html' in json_data:
-                            html_content = json_data['html']
-                            logger.info(f"Extracted HTML from JSON (first 200 chars): {html_content[:200]}")
-                            self._save_cache(cache_key, html_content)
-                            return html_content
-                        else:
-                            logger.error("JSON response does not contain 'html' field")
-                            return ""
-                    except json.JSONDecodeError:
-                        logger.error("Failed to parse JSON response")
-                        # If we can't parse as JSON, return the raw response as it may be direct HTML
-                        self._save_cache(cache_key, response_text)
-                        return response_text
-        
-        except Exception as e:
-            logger.exception(f"Error fetching calendar HTML: {e}")
+        data = {
+            'action': 'aerc_calendar_form',
+            'calendar': 'calendar',
+            'country[]': ['United States', 'Canada'],
+            'within': '',
+            'zip': '',
+            'span[]': '#cal-span-season',
+            'season[]': season_ids,
+            'daterangefrom': '',
+            'daterangeto': '',
+            'distance[]': 'any',
+        }
+
+        response_text = await self._make_request(self.BASE_URL, "POST", data)
+        if not response_text:
             return ""
+            
+        try:
+            json_data = json.loads(response_text)
+            if 'html' in json_data:
+                html_content = json_data['html']
+                logger.info(f"Extracted HTML from JSON response (length: {len(html_content)})")
+                self._save_cache(cache_key, html_content)
+                return html_content
+            else:
+                logger.error("JSON response does not contain 'html' field")
+                return ""
+        except json.JSONDecodeError:
+            logger.error("Failed to parse JSON response")
+            # If we can't parse as JSON, return the raw response as it may be direct HTML
+            self._save_cache(cache_key, response_text)
+            return response_text
     
     def clean_html(self, html: str) -> str:
         """Clean the HTML to prepare for processing."""
@@ -235,6 +269,7 @@ class AERCScraper:
             logger.info("Loaded structured data from cache")
             return cached_data
         
+        self.metrics.gemini_calls += 1
         # Prepare the prompt for Gemini
         prompt = f"""
         Analyze this AERC endurance ride calendar HTML and extract structured data following these rules:
@@ -264,6 +299,7 @@ class AERCScraper:
             
             # If failed, retry with gemini-2.0-flash
             logger.info("Retrying with gemini-2.0-flash model")
+            self.metrics.gemini_calls += 1
             backup_model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"temperature": 0.3})
             response = await asyncio.to_thread(
                 lambda: backup_model.generate_content(prompt).text
@@ -276,10 +312,14 @@ class AERCScraper:
             
             # If still failed, use fallback regex parsing
             logger.warning("Gemini extraction failed, falling back to regex parsing")
+            self.metrics.gemini_errors += 2  # Count both attempts
+            self.metrics.fallback_used = True
             return self.fallback_extraction(html)
             
         except Exception as e:
             logger.exception(f"Error extracting structured data: {e}")
+            self.metrics.gemini_errors += 1
+            self.metrics.fallback_used = True
             return self.fallback_extraction(html)
     
     def parse_gemini_output(self, text: str) -> List[Dict[str, Any]]:
@@ -304,29 +344,52 @@ class AERCScraper:
             return []
     
     def validate_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Validate extracted events data."""
+        """Validate extracted events data and fill in defaults for required fields."""
+        self.metrics.events_found = len(events)
         valid_events = []
         
         for event in events:
-            # Check required fields
-            if not event.get('rideName') or not event.get('region'):
-                logger.warning(f"Skipping event missing required fields: {event.get('rideName', 'Unknown')}")
+            try:
+                # Fill in defaults for required fields if missing
+                event['rideName'] = event.get('rideName', 'Untitled AERC Event')
+                event['region'] = event.get('region', 'Unknown Region')
+                event['date'] = event.get('date')
+                
+                if not event['date']:
+                    logger.warning(f"Skipping event with no date: {event['rideName']}")
+                    continue
+                
+                # Ensure distances is a list
+                if not event.get('distances'):
+                    event['distances'] = [{"distance": "Unknown", "date": event['date']}]
+                    logger.warning(f"Added default distance for event: {event['rideName']}")
+                
+                # Validate email format if present
+                if event.get('rideManagerContact') and event['rideManagerContact'].get('email'):
+                    email = event['rideManagerContact']['email']
+                    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+                        logger.warning(f"Invalid email format for {event['rideName']}: {email}")
+                        event['rideManagerContact']['email'] = None
+                
+                # Ensure location is set
+                event['location'] = event.get('location', 'Location TBA')
+                
+                # Generate a stable external ID if missing
+                if not event.get('tag'):
+                    event['tag'] = int(hashlib.md5(
+                        f"{event['rideName']}-{event['date']}".encode()
+                    ).hexdigest()[:8], 16)
+                
+                valid_events.append(event)
+                logger.debug(f"Validated event: {event['rideName']}")
+            
+            except Exception as e:
+                logger.error(f"Error validating event: {e}")
+                logger.debug(f"Problematic event data: {event}")
                 continue
-            
-            # Validate dates and distances
-            if not event.get('date') or not event.get('distances'):
-                logger.warning(f"Skipping event with missing date or distances: {event.get('rideName')}")
-                continue
-            
-            # Validate email format if present
-            if event.get('rideManagerContact') and event['rideManagerContact'].get('email'):
-                email = event['rideManagerContact']['email']
-                if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-                    logger.warning(f"Invalid email format: {email} for {event.get('rideName')}")
-                    # Don't reject the entire event for this
-            
-            valid_events.append(event)
         
+        logger.info(f"Validated {len(valid_events)} out of {len(events)} events")
+        self.metrics.events_valid = len(valid_events)
         return valid_events
     
     def fallback_extraction(self, html: str) -> List[Dict[str, Any]]:
@@ -573,57 +636,75 @@ class AERCScraper:
             except Exception as e:
                 logger.error(f"Error storing event in database: {e}")
         
+        self.metrics.events_added = added_count
+        self.metrics.events_updated = updated_count
         return {"added": added_count, "updated": updated_count}
     
     async def run(self, db: AsyncSession) -> Dict[str, Any]:
         """Run the AERC scraper end-to-end."""
         try:
-            # 1. Extract season IDs
-            logger.info("Extracting season IDs")
-            season_ids = await self.extract_season_ids()
-            if not season_ids:
-                logger.error("Failed to extract season IDs")
-                return {"status": "error", "message": "Failed to extract season IDs"}
+            result = await self._run_scraper(db)
             
-            # 2. Fetch calendar HTML
-            logger.info("Fetching calendar HTML")
-            html = await self.fetch_calendar_html(season_ids)
-            if not html:
-                logger.error("Failed to fetch calendar HTML")
-                return {"status": "error", "message": "Failed to fetch calendar HTML"}
+            # Complete and save metrics
+            self.metrics.end_time = datetime.now()
+            self.metrics.log_summary()
+            self.metrics.save_to_file()
             
-            # 3. Clean HTML
-            logger.info("Cleaning HTML")
-            cleaned_html = self.clean_html(html)
-            if not cleaned_html:
-                logger.error("Failed to clean HTML")
-                return {"status": "error", "message": "Failed to clean HTML"}
-            
-            # 4. Extract structured data
-            logger.info("Extracting structured data")
-            events_data = await self.extract_structured_data(cleaned_html)
-            if not events_data:
-                logger.error("Failed to extract structured data")
-                return {"status": "error", "message": "Failed to extract structured data"}
-            
-            # 5. Convert to database schema
-            logger.info("Converting to database schema")
-            db_events = self.convert_to_db_events(events_data)
-            
-            # 6. Store in database
-            logger.info("Storing events in database")
-            result = await self.store_events(db_events, db)
-            
-            return {
-                "status": "success",
-                "events_found": len(events_data),
-                "events_added": result["added"],
-                "events_updated": result["updated"]
-            }
+            return result
             
         except Exception as e:
             logger.exception(f"Error running AERC scraper: {e}")
+            self.metrics.end_time = datetime.now()
+            self.metrics.log_summary()
+            self.metrics.save_to_file()
             return {"status": "error", "message": str(e)}
+
+    async def _run_scraper(self, db: AsyncSession) -> Dict[str, Any]:
+        """Internal method to run the scraper logic."""
+        # 1. Extract season IDs
+        logger.info("Extracting season IDs")
+        season_ids = await self.extract_season_ids()
+        if not season_ids:
+            logger.error("Failed to extract season IDs")
+            return {"status": "error", "message": "Failed to extract season IDs"}
+        
+        # 2. Fetch calendar HTML
+        logger.info("Fetching calendar HTML")
+        html = await self.fetch_calendar_html(season_ids)
+        if not html:
+            logger.error("Failed to fetch calendar HTML")
+            return {"status": "error", "message": "Failed to fetch calendar HTML"}
+        
+        # 3. Clean HTML
+        logger.info("Cleaning HTML")
+        cleaned_html = self.clean_html(html)
+        if not cleaned_html:
+            logger.error("Failed to clean HTML")
+            return {"status": "error", "message": "Failed to clean HTML"}
+        
+        # 4. Extract structured data
+        logger.info("Extracting structured data")
+        events_data = await self.extract_structured_data(cleaned_html)
+        if not events_data:
+            logger.error("Failed to extract structured data")
+            return {"status": "error", "message": "Failed to extract structured data"}
+        
+        # 5. Convert to database schema
+        logger.info("Converting to database schema")
+        db_events = self.convert_to_db_events(events_data)
+        
+        # 6. Store in database
+        logger.info("Storing events in database")
+        result = await self.store_events(db_events, db)
+        
+        return {
+            "status": "success",
+            "events_found": self.metrics.events_found,
+            "events_valid": self.metrics.events_valid,
+            "events_added": self.metrics.events_added,
+            "events_updated": self.metrics.events_updated,
+            "success_rate": (self.metrics.events_valid / self.metrics.events_found * 100) if self.metrics.events_found > 0 else 0
+        }
 
 async def run_aerc_scraper(db: AsyncSession) -> Dict[str, Any]:
     """Run the AERC scraper."""
