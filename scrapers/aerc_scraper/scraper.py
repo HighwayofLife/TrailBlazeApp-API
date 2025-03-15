@@ -13,6 +13,7 @@ import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import re
+import hashlib
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -41,6 +42,7 @@ class AERCScraper:
     
     BASE_URL = "https://aerc.org/wp-admin/admin-ajax.php"
     CALENDAR_URL = "https://aerc.org/calendar"
+    CACHE_DIR = "cache"
     
     def __init__(self):
         """Initialize the AERC scraper."""
@@ -62,6 +64,27 @@ class AERCScraper:
             "Sec-Fetch-User": "?1",
             "Upgrade-Insecure-Requests": "1"
         }
+        # Ensure cache directory exists
+        os.makedirs(self.CACHE_DIR, exist_ok=True)
+    
+    def _get_cache_path(self, key: str) -> str:
+        """Generate a cache file path for a given key."""
+        hash_key = hashlib.md5(key.encode()).hexdigest()
+        return os.path.join(self.CACHE_DIR, f"{hash_key}.json")
+
+    def _load_cache(self, key: str) -> Optional[Any]:
+        """Load cached data for a given key."""
+        cache_path = self._get_cache_path(key)
+        if os.path.exists(cache_path):
+            with open(cache_path, 'r') as cache_file:
+                return json.load(cache_file)
+        return None
+
+    def _save_cache(self, key: str, data: Any) -> None:
+        """Save data to cache for a given key."""
+        cache_path = self._get_cache_path(key)
+        with open(cache_path, 'w') as cache_file:
+            json.dump(data, cache_file)
     
     async def extract_season_ids(self) -> List[str]:
         """Extract season IDs from the AERC calendar page."""
@@ -101,7 +124,13 @@ class AERCScraper:
         if not season_ids:
             logger.error("No season IDs provided")
             return ""
-        
+
+        cache_key = f"calendar_html_{'_'.join(season_ids)}"
+        cached_html = self._load_cache(cache_key)
+        if cached_html:
+            logger.info("Loaded calendar HTML from cache")
+            return cached_html
+
         try:
             data = {
                 'action': 'aerc_calendar_form',
@@ -134,6 +163,7 @@ class AERCScraper:
                         if 'html' in json_data:
                             html_content = json_data['html']
                             logger.info(f"Extracted HTML from JSON (first 200 chars): {html_content[:200]}")
+                            self._save_cache(cache_key, html_content)
                             return html_content
                         else:
                             logger.error("JSON response does not contain 'html' field")
@@ -141,6 +171,7 @@ class AERCScraper:
                     except json.JSONDecodeError:
                         logger.error("Failed to parse JSON response")
                         # If we can't parse as JSON, return the raw response as it may be direct HTML
+                        self._save_cache(cache_key, response_text)
                         return response_text
         
         except Exception as e:
@@ -196,6 +227,12 @@ class AERCScraper:
         if not html:
             logger.error("No HTML provided for extraction")
             return []
+
+        cache_key = f"structured_data_{hashlib.md5(html.encode()).hexdigest()}"
+        cached_data = self._load_cache(cache_key)
+        if cached_data:
+            logger.info("Loaded structured data from cache")
+            return cached_data
         
         # Prepare the prompt for Gemini
         prompt = f"""
@@ -318,6 +355,7 @@ class AERCScraper:
             # Try to parse the JSON
             data = self.parse_gemini_output(response)
             if data:
+                self._save_cache(cache_key, data)
                 return data
             
             # If failed, retry with gemini-2.0-flash
@@ -329,6 +367,7 @@ class AERCScraper:
             
             data = self.parse_gemini_output(response)
             if data:
+                self._save_cache(cache_key, data)
                 return data
             
             # If still failed, use fallback regex parsing
