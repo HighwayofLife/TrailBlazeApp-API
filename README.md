@@ -1,6 +1,8 @@
 # TrailBlazeApp-API
 
-Backend API for the TrailBlaze application, a mobile app for endurance and trail riders, focusing initially on the PNER (Pacific Northwest Endurance Rides) region.
+Backend API for the TrailBlaze application, a mobile app for distance, trail, and endurance and riders to help them plan, and get information about upcoming events, ride locations, and more.
+
+![TrailBlazeApp Banner](./assets/trailblaze_banner_sm.png)
 
 ## Overview
 
@@ -8,9 +10,9 @@ TrailBlazeApp-API is the backend service that powers the TrailBlaze mobile appli
 
 ## Features
 
-- RESTful API for event data
-- AI-powered Q&A assistant using Google Gemini 2.0 Flash API
-- Automated data scraping from multiple sources
+- RESTful API for event data, user management, directions, and more.
+- AI-powered Q&A assistant using Google Gemini 2.0 Flash API to easily answer user questions related to events, trails, training, and more.
+- Automated data retrieval from multiple sources to keep event data up-to-date.
 - PostgreSQL database for data storage
 
 ## Technology Stack
