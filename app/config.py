@@ -1,8 +1,9 @@
 import os
 from pydantic_settings import BaseSettings
 from functools import lru_cache
-
 # Load environment variables from .env file
+from dotenv import load_dotenv
+
 load_dotenv()
 
 class Settings(BaseSettings):
@@ -34,6 +35,9 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = "gemini-2.0-flash"
     
+    # Add lowercase version for compatibility
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     
@@ -42,7 +46,8 @@ class Settings(BaseSettings):
     
     class Config:
         env_file = ".env"
-        case_sensitive = True
+        case_sensitive = False
+        extra = "ignore"  # Ignore extra fields in validation
 
 
 @lru_cache

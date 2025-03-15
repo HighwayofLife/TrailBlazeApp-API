@@ -46,12 +46,18 @@ The system currently scrapes the following data sources:
    - Data: National ride listings, AERC sanctioned events
    - Update frequency: Weekly
 
-3. **Ride Managers' Websites**
+3. **AERC Calendar** (Enhanced Scraper)
+   - URL: https://aerc.org/calendar
+   - Data: Detailed event information with ride managers, distances, and locations
+   - Update frequency: Weekly
+   - Uses AI extraction: Yes (Gemini API)
+
+4. **Ride Managers' Websites**
    - Various URLs based on event listings
    - Data: Detailed event information, flyer PDFs
    - Update frequency: Daily (for upcoming events)
 
-4. **Facebook Pages**
+5. **Facebook Pages**
    - Pages maintained by ride organizers
    - Data: Announcements, updates, photos
    - Update frequency: Daily (for upcoming events)

@@ -23,7 +23,7 @@ logger = get_logger("scrapers.run")
 
 async def run_all_scrapers() -> None:
     """Run all available scrapers."""
-    scraper_ids = ["pner", "aerc", "facebook"]
+    scraper_ids = ["aerc_calendar"]
     
     async with async_session() as db:
         for scraper_id in scraper_ids:

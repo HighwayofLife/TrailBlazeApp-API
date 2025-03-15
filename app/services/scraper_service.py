@@ -11,6 +11,9 @@ from app.schemas.event import EventCreate
 from app.crud.event import create_event, get_events
 from app.config import get_settings
 
+# Import the new AERC calendar scraper
+from scrapers.aerc_scraper import run_aerc_scraper
+
 logger = get_logger("services.scraper")
 settings = get_settings()
 
@@ -29,7 +32,8 @@ async def run_scraper(scraper_id: str, db: AsyncSession) -> Dict[str, Any]:
     scrapers = {
         "pner": scrape_pner,
         "aerc": scrape_aerc,
-        "facebook": scrape_facebook
+        "facebook": scrape_facebook,
+        "aerc_calendar": run_aerc_scraper
     }
     
     if scraper_id not in scrapers:
@@ -46,8 +50,8 @@ async def run_scraper(scraper_id: str, db: AsyncSession) -> Dict[str, Any]:
         return {
             "status": "success",
             "scraper": scraper_id,
-            "events_found": results["events_found"],
-            "events_added": results["events_added"]
+            "events_found": results.get("events_found", 0),
+            "events_added": results.get("events_added", 0)
         }
     except Exception as e:
         logger.exception(f"Error running {scraper_id} scraper: {str(e)}")
