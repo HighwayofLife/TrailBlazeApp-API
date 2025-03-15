@@ -11,52 +11,50 @@ class Event(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
-    date_start = Column(DateTime, nullable=False, index=True)  # Changed from start_date to match schema
-    date_end = Column(DateTime, nullable=False)               # Changed from end_date to match schema
-    location_name = Column(String(255), nullable=False)
-    address = Column(String(255))
-    city = Column(String(100))
-    state = Column(String(100))
-    country = Column(String(100), default="USA")
-    latitude = Column(Float)
-    longitude = Column(Float)
-    organization = Column(String(100))  # AERC, PNER, EDRA, etc.
+    location = Column(String(255), nullable=False)
+    date_start = Column(DateTime, nullable=False, index=True)
+    date_end = Column(DateTime, nullable=True)
+    organizer = Column(String(255), nullable=True)
+    website = Column(String(512), nullable=True)
+    flyer_url = Column(String(512), nullable=True)
+    region = Column(String(100), nullable=True, index=True)
+    distances = Column(ARRAY(String), nullable=True)
     
-    # Event details
-    distances = Column(ARRAY(String), nullable=True)  # Array of available distances e.g. [25, 50, 100]
-    requirements = Column(JSON)  # Any special requirements/rules
-    flyer_url = Column(String(512), nullable=True)  # URL to the ride flyer PDF or image
-    website_url = Column(String(512), nullable=True)  # Event or ride manager's website
-    contact_name = Column(String(255))
-    contact_email = Column(String(255))
-    contact_phone = Column(String(50))
-    
-    # Core structured fields to add (universal across event types)
+    # Core structured fields
     ride_manager = Column(String, nullable=True)
-    manager_contact = Column(String, nullable=True)  # General contact info
-    event_type = Column(String, nullable=True)  # AERC, EDRA, CTR, etc.
+    manager_contact = Column(String, nullable=True)
+    event_type = Column(String, nullable=True)
     
-    # Semi-structured flexible data (varies by event type)
-    event_details = Column(JSONB, nullable=True)  # Store type-specific structured data
+    # Semi-structured flexible data
+    event_details = Column(JSONB, nullable=True)
     
-    # General notes field (completely unstructured)
-    notes = Column(Text, nullable=True)  # For any additional information
+    # General notes field
+    notes = Column(Text, nullable=True)
     
     # External reference
-    external_id = Column(String, nullable=True)  # For the "tag" from source system
+    external_id = Column(String, nullable=True)
+    
+    # Manager details
+    manager_email = Column(String, nullable=True)
+    manager_phone = Column(String, nullable=True)
+    
+    # Additional AERC fields
+    judges = Column(ARRAY(String), nullable=True)
+    directions = Column(Text, nullable=True)
+    map_link = Column(String, nullable=True)
     
     # Timestamps and metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
     is_canceled = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
-    source = Column(String(255))  # Where this info was scraped from
+    source = Column(String(255))
     
     # Relationships
     announcements = relationship("Announcement", back_populates="event", cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f"<Event {self.id}: {self.name}>"
+        return f"<Event {self.name}>"
 
 class Announcement(Base):
     __tablename__ = "announcements"

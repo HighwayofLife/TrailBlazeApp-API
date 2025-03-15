@@ -44,12 +44,14 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db/trailblaze
       - DOCKER_ENV=true
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL}
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./:/app
-    command: python scrapers/run_scrapers.py aerc_calendar
+    command: python -m scrapers.run_scrapers aerc_calendar
 
   manage:
     build:
