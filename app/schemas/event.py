@@ -40,6 +40,10 @@ class EventBase(BaseModel):
     directions: Optional[str] = None
     map_link: Optional[str] = None
     external_id: Optional[str] = None
+    manager_contact: Optional[str] = None
+    event_type: Optional[str] = None 
+    event_details: Optional[Dict[str, Any]] = None  # For semi-structured data
+    notes: Optional[str] = None
 
 class EventCreate(EventBase):
     """Schema for creating an event."""

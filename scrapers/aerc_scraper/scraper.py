@@ -471,6 +471,47 @@ class AERCScraper:
                     manager_email = event['rideManagerContact'].get('email')
                     manager_phone = event['rideManagerContact'].get('phone')
                 
+                # Prepare event details JSON
+                event_details = {
+                    "controlJudges": event.get('controlJudges', []),
+                    "directions": event.get('directions'),
+                    "mapLink": event.get('mapLink'),
+                    "hasIntroRide": event.get('hasIntroRide', False),
+                }
+                
+                # Prepare notes text combining relevant information
+                notes_parts = []
+                
+                # Add manager contact details to notes
+                if event.get('rideManagerContact'):
+                    contact = event['rideManagerContact']
+                    manager_contact = []
+                    if contact.get('name'):
+                        manager_contact.append(contact['name'])
+                    if contact.get('email'):
+                        manager_contact.append(contact['email'])
+                    if contact.get('phone'):
+                        manager_contact.append(contact['phone'])
+                    
+                    if manager_contact:
+                        notes_parts.append(f"Manager contact: {', '.join(manager_contact)}")
+                
+                # Add control judges to notes
+                if event.get('controlJudges'):
+                    judge_notes = []
+                    for judge in event['controlJudges']:
+                        judge_notes.append(f"{judge.get('role', 'Judge')}: {judge.get('name', '')}")
+                    if judge_notes:
+                        notes_parts.append("Control judges: " + "; ".join(judge_notes))
+                
+                # Add directions to notes if available
+                if event.get('directions'):
+                    notes_parts.append(f"Directions: {event['directions']}")
+                
+                # Add any description to notes
+                if event.get('description'):
+                    notes_parts.append(event['description'])
+                
                 # Create event
                 db_event = EventCreate(
                     name=event.get('rideName', "Unknown Event"),
@@ -484,13 +525,14 @@ class AERCScraper:
                     region=f"AERC {event.get('region', '')}",
                     distances=distances,
                     source="aerc_scraper",
+                    
                     # New fields
                     ride_manager=event.get('rideManager'),
-                    manager_email=manager_email,
-                    manager_phone=manager_phone,
-                    judges=judges,
-                    directions=event.get('directions'),
-                    map_link=event.get('mapLink'),
+                    manager_contact=event.get('rideManagerContact', {}).get('email', '') or 
+                                   event.get('rideManagerContact', {}).get('phone', ''),
+                    event_type="AERC Endurance",
+                    event_details=event_details,
+                    notes="\n\n".join(notes_parts) if notes_parts else None,
                     external_id=str(event.get('tag')) if event.get('tag') else None,
                 )
                 
