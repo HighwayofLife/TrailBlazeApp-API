@@ -1,4 +1,4 @@
-// ...existing code...
+# Deployment Guide
 
 ### Additional Environment Variables
 
@@ -273,3 +273,9 @@ alembic downgrade -1
 ```bash
 psql -U username -d trailblaze < backup.sql
 ```
+
+Ensure that the following services are running:
+- `db`: PostgreSQL database
+- `api`: FastAPI application
+- `scraper`: Scraper service
+- `manage`: Management tasks

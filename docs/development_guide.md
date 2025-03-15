@@ -6,14 +6,24 @@ This document provides comprehensive instructions for developers working on the 
 
 ## Table of Contents
 
-- [Development Environment Setup](#development-environment-setup)
-- [Project Structure](#project-structure)
-- [Code Style and Standards](#code-style-and-standards)
-- [Development Workflow](#development-workflow)
-- [Adding New Features](#adding-new-features)
-- [Database Migrations](#database-migrations)
-- [Working with the Gemini API](#working-with-the-gemini-api)
-- [Common Development Tasks](#common-development-tasks)
+- [Development Guide](#development-guide)
+  - [Summary](#summary)
+  - [Table of Contents](#table-of-contents)
+  - [Development Environment Setup](#development-environment-setup)
+    - [Prerequisites](#prerequisites)
+    - [Local Development](#local-development)
+    - [Docker Setup](#docker-setup)
+  - [Project Structure](#project-structure)
+  - [Code Style and Standards](#code-style-and-standards)
+    - [Recommended Tools](#recommended-tools)
+  - [Development Workflow](#development-workflow)
+  - [Adding New Features](#adding-new-features)
+  - [Database Migrations](#database-migrations)
+  - [Working with the Gemini API](#working-with-the-gemini-api)
+  - [Common Development Tasks](#common-development-tasks)
+    - [Adding a New Endpoint](#adding-a-new-endpoint)
+    - [Adding a New Scraper](#adding-a-new-scraper)
+    - [Debugging Tips](#debugging-tips)
 
 ## Development Environment Setup
 
@@ -24,61 +34,44 @@ This document provides comprehensive instructions for developers working on the 
 - Docker and Docker Compose (optional, for containerized development)
 - PostgreSQL (if running locally)
 
-### Initial Setup
-
-1. **Clone the repository:**
+### Local Development
 
 ```bash
+# Clone the repository
 git clone https://github.com/highwayoflife/TrailBlazeApp-API.git
 cd TrailBlazeApp-API
-```
 
-2. **Create a virtual environment:**
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your configuration
 
-```bash
+# Create and activate virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
 
-3. **Install dependencies:**
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-4. **Environment variables:**
-
-Create a `.env` file in the root directory with the following variables:
-
-```
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost/trailblaze
-GEMINI_API_KEY=your_gemini_api_key
-DEBUG=true
-LOG_LEVEL=DEBUG
-```
-
-5. **Set up the database:**
-
-```bash
-# Start a PostgreSQL instance (if using Docker)
-docker-compose up -d db
-
-# Run migrations
+# Run database migrations
 alembic upgrade head
 
-# Optionally seed with sample data
-python -m app.scripts.seed_data
-```
-
-6. **Start the development server:**
-
-```bash
+# Start the development server
 uvicorn app.main:app --reload
 ```
 
-7. **Access the API documentation:**
+Visit [http://localhost:8000/docs](http://localhost:8000/docs) to view the interactive API documentation.
 
-Open your browser and navigate to http://localhost:8000/docs
+### Docker Setup
+
+```bash
+docker-compose up -d
+```
+
+Ensure that the following services are running:
+- `db`: PostgreSQL database
+- `api`: FastAPI application
+- `scraper`: Scraper service
+- `manage`: Management tasks
 
 ## Project Structure
 
