@@ -18,6 +18,7 @@ aiohttp==3.11.13
 # Scraping
 beautifulsoup4>=4.12.2
 scrapy>=2.10.0
+Brotli>=1.1.0
 
 # Testing
 pytest>=7.4.0

@@ -29,11 +29,42 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db/trailblaze
+      - DOCKER_ENV=true
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./:/app
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trailblaze_scraper
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db/trailblaze
+      - DOCKER_ENV=true
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    command: python scrapers/run_scrapers.py aerc_calendar
+
+  manage:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trailblaze_manage
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db/trailblaze
+      - DOCKER_ENV=true
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    command: tail -f /dev/null  # Keep container running
       
 volumes:
   postgres_data:
