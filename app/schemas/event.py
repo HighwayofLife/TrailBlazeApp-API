@@ -33,6 +33,13 @@ class EventBase(BaseModel):
     flyer_url: Optional[str] = None
     region: Optional[str] = None
     distances: Optional[List[str]] = None
+    ride_manager: Optional[str] = None
+    manager_email: Optional[str] = None
+    manager_phone: Optional[str] = None
+    judges: Optional[List[str]] = None
+    directions: Optional[str] = None
+    map_link: Optional[str] = None
+    external_id: Optional[str] = None
 
 class EventCreate(EventBase):
     """Schema for creating an event."""

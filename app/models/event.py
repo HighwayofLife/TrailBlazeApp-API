@@ -30,6 +30,15 @@ class Event(Base):
     contact_email = Column(String(255))
     contact_phone = Column(String(50))
     
+    # New fields to add
+    ride_manager = Column(String, nullable=True)
+    manager_email = Column(String, nullable=True)
+    manager_phone = Column(String, nullable=True)
+    judges = Column(ARRAY(String), nullable=True)  # Array of judge names
+    directions = Column(Text, nullable=True)
+    map_link = Column(String, nullable=True)
+    external_id = Column(String, nullable=True)  # For the "tag" from AERC
+    
     # Timestamps and metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)

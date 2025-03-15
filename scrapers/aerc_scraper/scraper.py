@@ -459,6 +459,18 @@ class AERCScraper:
                             except ValueError:
                                 pass
                 
+                # Extract judges to a list of strings
+                judges = []
+                if event.get('controlJudges'):
+                    judges = [f"{judge.get('role', '')}: {judge.get('name', '')}" for judge in event['controlJudges']]
+                
+                # Extract manager contact details
+                manager_email = None
+                manager_phone = None
+                if event.get('rideManagerContact'):
+                    manager_email = event['rideManagerContact'].get('email')
+                    manager_phone = event['rideManagerContact'].get('phone')
+                
                 # Create event
                 db_event = EventCreate(
                     name=event.get('rideName', "Unknown Event"),
@@ -471,7 +483,15 @@ class AERCScraper:
                     flyer_url="",  # AERC doesn't provide flyers in the calendar
                     region=f"AERC {event.get('region', '')}",
                     distances=distances,
-                    source="aerc_scraper"
+                    source="aerc_scraper",
+                    # New fields
+                    ride_manager=event.get('rideManager'),
+                    manager_email=manager_email,
+                    manager_phone=manager_phone,
+                    judges=judges,
+                    directions=event.get('directions'),
+                    map_link=event.get('mapLink'),
+                    external_id=str(event.get('tag')) if event.get('tag') else None,
                 )
                 
                 db_events.append(db_event)
