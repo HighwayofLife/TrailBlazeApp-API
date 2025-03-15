@@ -11,8 +11,8 @@ class Event(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
-    start_date = Column(DateTime, nullable=False, index=True)
-    end_date = Column(DateTime, nullable=False)
+    date_start = Column(DateTime, nullable=False, index=True)  # Changed from start_date to match schema
+    date_end = Column(DateTime, nullable=False)               # Changed from end_date to match schema
     location_name = Column(String(255), nullable=False)
     address = Column(String(255))
     city = Column(String(100))

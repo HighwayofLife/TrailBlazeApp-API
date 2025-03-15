@@ -444,7 +444,7 @@ class AERCScraper:
                 if event.get('distances'):
                     distances = [d.get('distance') for d in event['distances'] if d.get('distance')]
                 
-                # Get event end date (if multiple days)
+                # Get event start and end date
                 date_start = datetime.strptime(event.get('date'), "%Y-%m-%d") if event.get('date') else None
                 date_end = date_start
                 
@@ -512,13 +512,13 @@ class AERCScraper:
                 if event.get('description'):
                     notes_parts.append(event['description'])
                 
-                # Create event
+                # Create event - USING CORRECT FIELD NAMES FROM DATABASE SCHEMA
                 db_event = EventCreate(
                     name=event.get('rideName', "Unknown Event"),
                     description=event.get('description', ""),
                     location=event.get('location', ""),
-                    date_start=date_start,
-                    date_end=date_end,
+                    date_start=date_start,  # Using date_start to match schema
+                    date_end=date_end,      # Using date_end to match schema
                     organizer="AERC",
                     website=event.get('website', ""),
                     flyer_url="",  # AERC doesn't provide flyers in the calendar
@@ -553,8 +553,8 @@ class AERCScraper:
                 # Check if event exists (by name and date)
                 existing_events = await get_events(
                     db,
-                    date_from=event.date_start.isoformat() if event.date_start else None,
-                    date_to=event.date_start.isoformat() if event.date_start else None
+                    date_from=event.date_start.isoformat() if event.date_start else None,  # Updated to date_start
+                    date_to=event.date_start.isoformat() if event.date_start else None     # Updated to date_start
                 )
                 
                 exists = False

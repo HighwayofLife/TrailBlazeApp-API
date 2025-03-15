@@ -85,10 +85,11 @@ async def create_event(db: AsyncSession, event: EventCreate) -> Event:
     Returns:
         Created event
     """
+    # Creating dictionary with field mappings from schema to model
     db_event = Event(
         name=event.name,
         description=event.description,
-        location=event.location,
+        location_name=event.location,  # Map location to location_name
         date_start=event.date_start,
         date_end=event.date_end,
         organizer=event.organizer,
@@ -96,6 +97,13 @@ async def create_event(db: AsyncSession, event: EventCreate) -> Event:
         flyer_url=event.flyer_url,
         region=event.region,
         distances=event.distances,
+        ride_manager=event.ride_manager,
+        manager_contact=event.manager_contact,
+        event_type=event.event_type,
+        event_details=event.event_details,
+        notes=event.notes,
+        external_id=event.external_id,
+        source=getattr(event, 'source', None),
     )
     
     db.add(db_event)
@@ -125,6 +133,10 @@ async def update_event(db: AsyncSession, event_id: int, event: EventUpdate) -> O
     
     # Create a dictionary with only the fields that are not None
     update_data = {k: v for k, v in event.dict().items() if v is not None}
+    
+    # Map location to location_name if it exists
+    if 'location' in update_data:
+        update_data['location_name'] = update_data.pop('location')
     
     if update_data:
         # Update the event

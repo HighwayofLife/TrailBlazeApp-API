@@ -9,8 +9,8 @@ class Event(Base):
     title = Column(String, nullable=False)
     description = Column(Text)
     location = Column(String)
-    start_date = Column(DateTime, nullable=False)
-    end_date = Column(DateTime)
+    date_start = Column(DateTime, nullable=False)  # Changed from start_date
+    date_end = Column(DateTime)  # Changed from end_date
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
