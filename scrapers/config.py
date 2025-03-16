@@ -9,6 +9,43 @@ from pydantic import Field, validator
 
 from .exceptions import ConfigError
 
+class ScraperBaseSettings(BaseSettings):
+    """Base settings for all scrapers."""
+    
+    # Base paths
+    cache_dir: str = "cache"
+    logs_dir: str = "logs"
+    metrics_dir: str = "logs/metrics"
+    
+    # Database settings
+    database_url: str
+    
+    # Network settings
+    requests_per_second: float = 1.0
+    max_burst_size: int = 5
+    max_retries: int = 3
+    timeout_seconds: int = 30
+    
+    # Default headers
+    default_headers: Dict[str, str] = {
+        "User-Agent": "TrailBlazeApp/1.0",
+        "Accept": "text/html,application/json",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+    
+    # Cache settings
+    cache_ttl: int = 3600
+    force_refresh: bool = False
+    
+    # Debug settings
+    debug_mode: bool = False
+    validate_data: bool = True
+    
+    class Config:
+        env_prefix = "SCRAPER_"
+        case_sensitive = False
+        env_file = ".env"
+
 class ScraperSettings(BaseSettings):
     """Base settings for all scrapers."""
     

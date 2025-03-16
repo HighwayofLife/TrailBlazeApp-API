@@ -35,3 +35,7 @@ class RateLimitError(ScraperError):
 class AIError(ScraperError):
     """Raised when AI operations fail."""
     pass
+
+class DataExtractionError(ScraperError):
+    """Raised when data extraction operations fail."""
+    pass

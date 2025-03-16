@@ -1,12 +1,13 @@
 """Configuration management for AERC scraper."""
-
 from functools import lru_cache
 from typing import Dict, Any
 from pydantic_settings import BaseSettings
+from ..config import ScraperBaseSettings, ScraperSettings
 
-from ..config import ScraperBaseSettings
+# Alias for backward compatibility
+ScraperSettings = ScraperBaseSettings
 
-class AERCScraperSettings(ScraperBaseSettings):
+class AERCScraperSettings(ScraperSettings):
     """AERC-specific scraper settings."""
     
     # AERC API settings
@@ -48,6 +49,6 @@ class AERCScraperSettings(ScraperBaseSettings):
         extra = "ignore"  # Ignore unknown fields
 
 @lru_cache()
-def get_settings(base_settings: ScraperBaseSettings = None) -> AERCScraperSettings:
+def get_settings(base_settings: ScraperSettings = None) -> AERCScraperSettings:
     """Get cached settings instance."""
     return AERCScraperSettings()
