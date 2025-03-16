@@ -23,6 +23,9 @@ class ScraperMetrics:
     events_valid: int = 0
     events_added: int = 0
     events_updated: int = 0
+    events_skipped: int = 0
+    calendar_rows_found: int = 0
+    validation_errors: int = 0
     gemini_calls: int = 0
     gemini_errors: int = 0
     fallback_used: bool = False
@@ -35,14 +38,18 @@ class ScraperMetrics:
             "http_requests": self.http_requests,
             "http_errors": self.http_errors,
             "request_retries": self.request_retries,
+            "calendar_rows_found": self.calendar_rows_found,
             "events_found": self.events_found,
             "events_valid": self.events_valid,
             "events_added": self.events_added,
             "events_updated": self.events_updated,
+            "events_skipped": self.events_skipped,
+            "validation_errors": self.validation_errors,
             "gemini_calls": self.gemini_calls,
             "gemini_errors": self.gemini_errors,
             "fallback_used": self.fallback_used,
-            "success_rate": (self.events_valid / self.events_found * 100) if self.events_found > 0 else 0
+            "success_rate": (self.events_valid / self.events_found * 100) if self.events_found > 0 else 0,
+            "processing_rate": (self.events_valid / self.calendar_rows_found * 100) if self.calendar_rows_found > 0 else 0
         }
     
     def log_summary(self) -> None:
@@ -52,16 +59,21 @@ class ScraperMetrics:
             
         logger.info("Scraper run completed. Metrics summary:")
         logger.info(f"Duration: {(self.end_time - self.start_time).total_seconds():.2f} seconds")
-        logger.info(f"Events found: {self.events_found}")
+        logger.info(f"Calendar rows found: {self.calendar_rows_found}")
+        logger.info(f"Events extracted: {self.events_found}")
         logger.info(f"Valid events: {self.events_valid}")
         logger.info(f"Events added: {self.events_added}")
         logger.info(f"Events updated: {self.events_updated}")
+        logger.info(f"Events skipped: {self.events_skipped}")
+        logger.info(f"Validation errors: {self.validation_errors}")
         logger.info(f"HTTP requests: {self.http_requests} (errors: {self.http_errors}, retries: {self.request_retries})")
         logger.info(f"Gemini API calls: {self.gemini_calls} (errors: {self.gemini_errors})")
         logger.info(f"Fallback extraction used: {self.fallback_used}")
         
         if self.events_found > 0:
-            logger.info(f"Success rate: {self.events_valid / self.events_found * 100:.1f}%")
+            logger.info(f"Event validation rate: {self.events_valid / self.events_found * 100:.1f}%")
+        if self.calendar_rows_found > 0:
+            logger.info(f"Calendar processing rate: {self.events_valid / self.calendar_rows_found * 100:.1f}%")
     
     def save_to_file(self, metrics_dir: str = "logs/metrics") -> None:
         """Save metrics to a JSON file."""

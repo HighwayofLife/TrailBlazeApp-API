@@ -70,8 +70,12 @@ class AERCScraper:
         }
         # Ensure cache directory exists
         os.makedirs(self.CACHE_DIR, exist_ok=True)
-        # Initialize metrics
+        # Initialize metrics with enhanced tracking
         self.metrics = ScraperMetrics(start_time=datetime.now())
+        self.metrics.calendar_rows_found = 0
+        self.metrics.events_skipped = 0
+        self.metrics.events_duplicate = 0
+        self.metrics.validation_errors = 0
     
     def _get_cache_path(self, key: str) -> str:
         """Generate a cache file path for a given key."""
@@ -221,24 +225,16 @@ class AERCScraper:
         try:
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Debug: Check what elements are actually in the HTML
-            logger.info(f"HTML structure - tags found: {[tag.name for tag in soup.find_all()][:20]}")
-            
             # Remove unnecessary elements
             for tag in ['script', 'style', 'header', 'footer', 'nav']:
                 for element in soup.find_all(tag):
                     element.decompose()
             
-            # Debug: Check for any div elements with class attributes
-            div_classes = set()
-            for div in soup.find_all('div'):
-                if div.has_attr('class'):
-                    div_classes.update(div['class'])
-            logger.info(f"Div classes found: {list(div_classes)[:20]}")
-            
             # Focus on calendar rows
             calendar_rows = soup.find_all('div', class_='calendarRow')
-            logger.info(f"Found {len(calendar_rows)} calendar rows")
+            row_count = len(calendar_rows)
+            logger.info(f"Found {row_count} calendar rows")
+            self.metrics.calendar_rows_found = row_count
             
             if not calendar_rows:
                 logger.error("No calendar rows found in the HTML")
@@ -256,7 +252,7 @@ class AERCScraper:
         except Exception as e:
             logger.exception(f"Error cleaning HTML: {e}")
             return ""
-    
+
     async def extract_structured_data(self, html: str) -> List[Dict[str, Any]]:
         """Extract structured data from HTML using Gemini."""
         if not html:
@@ -270,19 +266,25 @@ class AERCScraper:
             return cached_data
         
         self.metrics.gemini_calls += 1
-        # Prepare the prompt for Gemini
+        # Prepare the prompt for Gemini with clearer instructions
         prompt = f"""
-        Analyze this AERC endurance ride calendar HTML and extract structured data following these rules:
-        
-        Return valid JSON matching this schema:
-        ```json
-        {AERC_EVENT_SCHEMA}
-        ```
-        
-        Return the extracted JSON array with no explanations, only the valid JSON.
+        Extract endurance ride events from this AERC calendar HTML.
+        Return ONLY a valid JSON array of event objects.
+        Each event MUST have these fields:
+        - rideName (string)
+        - date (YYYY-MM-DD)
+        - region (string)
+        - location (string)
+        - distances (array of objects with distance, date, startTime)
+        - rideManager (string)
+        - rideManagerContact (object with name, email, phone)
+        - controlJudges (array of objects with role, name)
 
-        HTML to process:
-        {html[:60000]}  # Truncated to stay within token limits
+        Do not include any explanatory text, just the JSON array.
+        If parsing fails, return an empty array [].
+
+        Calendar HTML:
+        {html[:50000]}  # Reduced size to help avoid token overflow
         """
         
         try:
@@ -297,12 +299,30 @@ class AERCScraper:
                 self._save_cache(cache_key, data)
                 return data
             
-            # If failed, retry with gemini-2.0-flash
+            # If failed, retry with gemini-2.0-flash and a more restrictive prompt
             logger.info("Retrying with gemini-2.0-flash model")
             self.metrics.gemini_calls += 1
-            backup_model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"temperature": 0.3})
+            backup_model = genai.GenerativeModel('gemini-2.0-flash', generation_config={
+                "temperature": 0.1,  # Reduced temperature for more consistent output
+                "candidate_count": 1,
+                "max_output_tokens": 8192,
+                "stop_sequences": ["]"]  # Stop after closing the JSON array
+            })
+            
+            # More restrictive prompt for retry
+            retry_prompt = f"""
+            Parse this calendar HTML and output ONLY a JSON array.
+            Format: [{{event1}}, {{event2}}, ...]
+            Required fields per event: rideName, date, region, location
+            No explanations or extra text.
+            If unsure, skip the event.
+
+            HTML:
+            {html[:30000]}
+            """
+            
             response = await asyncio.to_thread(
-                lambda: backup_model.generate_content(prompt).text
+                lambda: backup_model.generate_content(retry_prompt).text
             )
             
             data = self.parse_gemini_output(response)
@@ -321,28 +341,40 @@ class AERCScraper:
             self.metrics.gemini_errors += 1
             self.metrics.fallback_used = True
             return self.fallback_extraction(html)
-    
+
     def parse_gemini_output(self, text: str) -> List[Dict[str, Any]]:
         """Parse Gemini output to extract JSON data."""
         try:
-            # Look for JSON array in the text
-            json_match = re.search(r'\[\s*{[\s\S]*}\s*\]', text)
-            if json_match:
-                json_str = json_match.group(0)
-                data = json.loads(json_str)
-                
-                # Validate the extracted data
-                if isinstance(data, list) and len(data) > 0:
-                    valid_data = self.validate_events(data)
-                    logger.info(f"Successfully extracted {len(valid_data)} events")
-                    return valid_data
+            # Remove any non-JSON content before and after the array
+            text = text.strip()
+            start_idx = text.find('[')
+            end_idx = text.rfind(']')
+            
+            if start_idx == -1 or end_idx == -1:
+                logger.error("No JSON array found in Gemini output")
+                return []
+            
+            json_str = text[start_idx:end_idx + 1]
+            
+            # Clean up common JSON formatting issues
+            json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas in objects
+            json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
+            
+            data = json.loads(json_str)
+            
+            # Validate the extracted data
+            if isinstance(data, list) and len(data) > 0:
+                valid_data = self.validate_events(data)
+                logger.info(f"Successfully extracted {len(valid_data)} events")
+                return valid_data
             
             return []
         
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON from Gemini output: {e}")
+            logger.debug(f"Problematic JSON: {text[:200]}...")  # Log start of problematic text
             return []
-    
+
     def validate_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Validate extracted events data and fill in defaults for required fields."""
         self.metrics.events_found = len(events)
@@ -356,6 +388,7 @@ class AERCScraper:
                 event['date'] = event.get('date')
                 
                 if not event['date']:
+                    self.metrics.validation_errors += 1
                     logger.warning(f"Skipping event with no date: {event['rideName']}")
                     continue
                 
@@ -370,6 +403,7 @@ class AERCScraper:
                     if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
                         logger.warning(f"Invalid email format for {event['rideName']}: {email}")
                         event['rideManagerContact']['email'] = None
+                        self.metrics.validation_errors += 1
                 
                 # Ensure location is set
                 event['location'] = event.get('location', 'Location TBA')
@@ -384,6 +418,7 @@ class AERCScraper:
                 logger.debug(f"Validated event: {event['rideName']}")
             
             except Exception as e:
+                self.metrics.validation_errors += 1
                 logger.error(f"Error validating event: {e}")
                 logger.debug(f"Problematic event data: {event}")
                 continue
@@ -402,94 +437,108 @@ class AERCScraper:
                 try:
                     event = {}
                     
-                    # Extract region
-                    region_elem = row.find('div', class_='region')
-                    if region_elem:
-                        event['region'] = region_elem.text.strip()
-                    
-                    # Extract ride name
-                    ride_name_elem = row.find('span', class_='rideName')
-                    if ride_name_elem:
-                        event['rideName'] = ride_name_elem.text.strip()
+                    # Extract region and ride name
+                    for span in row.find_all('span'):
+                        if 'region' in span.get('class', []):
+                            event['region'] = span.text.strip()
+                        elif 'rideName' in span.get('class', []):
+                            event['rideName'] = span.text.strip()
                     
                     # Extract date
                     date_elem = row.find('div', class_='bold')
                     if date_elem:
                         date_str = date_elem.text.strip()
-                        date_match = re.search(r'\b(\d{2}/\d{2}/\d{4})\b', date_str)
+                        date_match = re.search(r'\b(\d{1,2}/\d{1,2}/\d{4})\b', date_str)
                         if date_match:
-                            date_str = date_match.group(1)
-                            date_obj = datetime.strptime(date_str, '%m/%d/%Y')
-                            event['date'] = date_obj.strftime('%Y-%m-%d')
+                            try:
+                                date_str = date_match.group(1)
+                                date_obj = datetime.strptime(date_str, '%m/%d/%Y')
+                                event['date'] = date_obj.strftime('%Y-%m-%d')
+                            except ValueError as e:
+                                logger.warning(f"Failed to parse date {date_str}: {e}")
+                                continue
                     
                     # Extract location
                     location_elem = row.find('a', href=lambda href: href and 'maps.google.com' in href)
                     if location_elem:
                         event['location'] = location_elem.text.strip()
                         event['mapLink'] = location_elem['href']
-                        
-                        # Extract coordinates from Google Maps link
-                        coords_match = re.search(r'destination=([-\d.]+),([-\d.]+)', location_elem['href'])
-                        if coords_match:
-                            event['coordinates'] = {
-                                'lat': float(coords_match.group(1)),
-                                'lng': float(coords_match.group(2))
-                            }
                     
-                    # Extract distances (simplified)
+                    # Extract distances
                     distances = []
                     distance_table = row.find('table')
                     if distance_table:
-                        for row in distance_table.find_all('tr'):
-                            cells = row.find_all('td')
+                        for tr in distance_table.find_all('tr'):
+                            cells = tr.find_all('td')
                             if len(cells) >= 2:
-                                distance = cells[0].text.strip()
-                                if distance.isdigit() or re.match(r'^(\d+)\s*', distance):
+                                distance_text = cells[0].text.strip()
+                                if re.search(r'\d+', distance_text):  # Only add if contains numbers
                                     distances.append({
-                                        "distance": distance,
+                                        "distance": distance_text,
                                         "date": event.get('date', ''),
                                         "startTime": cells[1].text.strip() if len(cells) > 1 else ""
                                     })
-                    
                     event['distances'] = distances
                     
                     # Extract ride manager
-                    manager_section = row.find('div', string=lambda s: s and 'Ride Manager' in s)
-                    if manager_section and manager_section.find_next_sibling('div'):
-                        manager_info = manager_section.find_next_sibling('div').text.strip()
-                        event['rideManager'] = manager_info
-                        event['rideManagerContact'] = {"name": manager_info}
-                        
-                        # Try to extract email
-                        email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', manager_info)
-                        if email_match:
-                            event['rideManagerContact']['email'] = email_match.group(0)
-                        
-                        # Try to extract phone
-                        phone_match = re.search(r'(\(\d{3}\)\s*\d{3}-\d{4}|\d{3}-\d{3}-\d{4})', manager_info)
-                        if phone_match:
-                            event['rideManagerContact']['phone'] = phone_match.group(0)
+                    contact_info = {}
+                    manager_section = row.find(string=lambda s: isinstance(s, str) and 'Ride Manager' in s)
+                    if manager_section:
+                        container = manager_section.find_parent('div')
+                        if container:
+                            contact_div = container.find_next_sibling('div')
+                            if contact_div:
+                                contact_text = contact_div.text.strip()
+                                event['rideManager'] = contact_text
+                                
+                                # Extract email
+                                email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', contact_text)
+                                if email_match:
+                                    contact_info['email'] = email_match.group(0)
+                                
+                                # Extract phone
+                                phone_match = re.search(r'(?:\+1[- ]?)?\(?\d{3}\)?[- ]?\d{3}[- ]?\d{4}', contact_text)
+                                if phone_match:
+                                    contact_info['phone'] = phone_match.group(0)
+                                
+                                # Set name as remaining text after removing email and phone
+                                name_text = contact_text
+                                if contact_info.get('email'):
+                                    name_text = name_text.replace(contact_info['email'], '')
+                                if contact_info.get('phone'):
+                                    name_text = name_text.replace(contact_info['phone'], '')
+                                contact_info['name'] = re.sub(r'\s+', ' ', name_text).strip()
+                    
+                    event['rideManagerContact'] = contact_info
                     
                     # Extract control judges
-                    event['controlJudges'] = []
-                    judge_section = row.find('div', string=lambda s: s and 'Control Judge' in s)
-                    if judge_section and judge_section.find_next_sibling('div'):
-                        judge_info = judge_section.find_next_sibling('div').text.strip()
-                        event['controlJudges'].append({
-                            "role": "Head Control Judge",
-                            "name": judge_info
-                        })
+                    judges = []
+                    judge_section = row.find(string=lambda s: isinstance(s, str) and 'Control Judge' in s)
+                    if judge_section:
+                        container = judge_section.find_parent('div')
+                        if container:
+                            judge_div = container.find_next_sibling('div')
+                            if judge_div:
+                                judges.append({
+                                    "role": "Head Control Judge",
+                                    "name": judge_div.text.strip()
+                                })
+                    event['controlJudges'] = judges
                     
-                    # Set defaults for required fields
-                    event['hasIntroRide'] = 'Intro' in str(row) or 'Intro Ride' in str(row)
-                    event['tag'] = hash(event.get('rideName', '') + event.get('date', '')) % 10000
-                    
-                    if event.get('rideName') and event.get('date') and event.get('distances'):
+                    # Set required fields and validate
+                    if event.get('rideName') and event.get('date') and len(event.get('distances', [])) > 0:
+                        event['hasIntroRide'] = bool(re.search(r'intro|introductory', str(row), re.I))
+                        event['tag'] = int(hashlib.md5(
+                            f"{event['rideName']}-{event['date']}".encode()
+                        ).hexdigest()[:8], 16)
                         events.append(event)
+                        logger.debug(f"Extracted event: {event['rideName']} on {event['date']}")
                 
                 except Exception as e:
                     logger.error(f"Error processing row in fallback extraction: {e}")
+                    continue
             
+            logger.info(f"Fallback extraction found {len(events)} events")
             return events
         
         except Exception as e:
@@ -610,14 +659,15 @@ class AERCScraper:
         """Store events in the database."""
         added_count = 0
         updated_count = 0
+        skipped_count = 0
         
         for event in db_events:
             try:
                 # Check if event exists (by name and date)
                 existing_events = await get_events(
                     db,
-                    date_from=event.date_start.isoformat() if event.date_start else None,  # Updated to date_start
-                    date_to=event.date_start.isoformat() if event.date_start else None     # Updated to date_start
+                    date_from=event.date_start.isoformat() if event.date_start else None,
+                    date_to=event.date_start.isoformat() if event.date_start else None
                 )
                 
                 exists = False
@@ -629,16 +679,22 @@ class AERCScraper:
                 if not exists:
                     await create_event(db, event)
                     added_count += 1
+                    logger.info(f"Created new event: {event.name}")
                 else:
                     updated_count += 1
                     logger.info(f"Event already exists: {event.name}")
-            
             except Exception as e:
+                skipped_count += 1
                 logger.error(f"Error storing event in database: {e}")
         
         self.metrics.events_added = added_count
         self.metrics.events_updated = updated_count
-        return {"added": added_count, "updated": updated_count}
+        self.metrics.events_skipped = skipped_count
+        return {
+            "added": added_count, 
+            "updated": updated_count,
+            "skipped": skipped_count
+        }
     
     async def run(self, db: AsyncSession) -> Dict[str, Any]:
         """Run the AERC scraper end-to-end."""
@@ -699,10 +755,13 @@ class AERCScraper:
         
         return {
             "status": "success",
+            "scraper": "aerc_calendar",
             "events_found": self.metrics.events_found,
             "events_valid": self.metrics.events_valid,
             "events_added": self.metrics.events_added,
             "events_updated": self.metrics.events_updated,
+            "events_skipped": self.metrics.events_skipped,
+            "validation_errors": self.metrics.validation_errors,
             "success_rate": (self.metrics.events_valid / self.metrics.events_found * 100) if self.metrics.events_found > 0 else 0
         }
 
