@@ -1,163 +1,76 @@
-import asyncio
-from typing import Dict, List, Any, Optional
-from datetime import datetime
-import aiohttp
-from bs4 import BeautifulSoup
-import re
+"""Service for managing and running data scrapers."""
 
+from typing import Dict, List, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.logging_config import get_logger
-from app.schemas.event import EventCreate
-from app.crud.event import create_event, get_events
-from app.config import get_settings
-
-# Import the new AERC calendar scraper
-from scrapers.aerc_scraper import run_aerc_scraper
+from scrapers.scraper_manager import ScraperManager
+from scrapers.aerc_scraper import AERCScraper
+from scrapers.exceptions import ScraperError
 
 logger = get_logger("services.scraper")
-settings = get_settings()
 
+# Initialize and configure scraper manager
+_scraper_manager = ScraperManager()
+_scraper_manager.register_scraper("aerc_calendar", AERCScraper)
 
 async def run_scraper(scraper_id: str, db: AsyncSession) -> Dict[str, Any]:
-    """
-    Run a specific scraper.
-    
-    Args:
-        scraper_id: ID of the scraper to run
-        db: Database session
-        
-    Returns:
-        Dictionary with scraping results
-    """
-    scrapers = {
-        "pner": scrape_pner,
-        "aerc": scrape_aerc,
-        "facebook": scrape_facebook,
-        "aerc_calendar": run_aerc_scraper
-    }
-    
-    if scraper_id not in scrapers:
-        logger.error(f"Unknown scraper ID: {scraper_id}")
-        return {"status": "error", "message": "Unknown scraper ID"}
-    
-    logger.info(f"Starting scraper: {scraper_id}")
-    
+    """Run a specific scraper."""
     try:
-        # Run the appropriate scraper
-        scraper_func = scrapers[scraper_id]
-        results = await scraper_func(db)
+        logger.info(f"Running scraper: {scraper_id}")
+        result = await _scraper_manager.run_scraper(scraper_id, db)
         
+        logger.info(f"Scraper {scraper_id} completed successfully")
         return {
             "status": "success",
             "scraper": scraper_id,
-            "events_found": results.get("events_found", 0),
-            "events_added": results.get("events_added", 0)
+            "events_found": result.get("events_found", 0),
+            "events_added": result.get("events_added", 0),
+            "events_updated": result.get("events_updated", 0)
         }
-    except Exception as e:
-        logger.exception(f"Error running {scraper_id} scraper: {str(e)}")
+    except ScraperError as e:
+        logger.error(f"Error running scraper {scraper_id}: {str(e)}")
         return {
             "status": "error",
             "scraper": scraper_id,
             "message": str(e)
         }
-
-
-async def scrape_pner(db: AsyncSession) -> Dict[str, Any]:
-    """
-    Scrape PNER website for events.
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Dictionary with scraping results
-    """
-    url = "https://www.pner.net/rides"
-    events_found = 0
-    events_added = 0
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    logger.error(f"Failed to fetch PNER rides: {response.status}")
-                    return {"events_found": 0, "events_added": 0}
-                
-                html = await response.text()
-                
-        # Use BeautifulSoup to parse HTML
-        soup = BeautifulSoup(html, "html.parser")
-        
-        # This is a placeholder for actual scraping logic, which would be
-        # customized based on the PNER website structure
-        event_elements = soup.select(".ride-event")  # Replace with actual CSS selector
-        
-        for element in event_elements:
-            events_found += 1
-            
-            # Extract event details (this is pseudocode, actual implementation depends on HTML structure)
-            name = element.select_one(".ride-name").text.strip()
-            location = element.select_one(".ride-location").text.strip()
-            date_str = element.select_one(".ride-date").text.strip()
-            
-            # Parse date from string to datetime
-            date_start = datetime.strptime(date_str, "%m/%d/%Y")
-            
-            # Check if event already exists
-            existing_events = await get_events(
-                db, 
-                date_from=date_start.isoformat(),
-                date_to=date_start.isoformat()
-            )
-            
-            if any(e.name == name and e.location == location for e in existing_events):
-                logger.info(f"Event already exists: {name} at {location} on {date_str}")
-                continue
-            
-            # Create event
-            event_data = EventCreate(
-                name=name,
-                location=location,
-                date_start=date_start,
-                region="Pacific Northwest",
-                # Fill in other fields as available
-            )
-            
-            await create_event(db, event_data)
-            events_added += 1
-            
-        return {"events_found": events_found, "events_added": events_added}
-    
     except Exception as e:
-        logger.exception(f"Error scraping PNER: {str(e)}")
-        raise
+        logger.exception(f"Unexpected error running scraper {scraper_id}: {str(e)}")
+        return {
+            "status": "error",
+            "scraper": scraper_id,
+            "message": f"Unexpected error: {str(e)}"
+        }
 
-
-async def scrape_aerc(db: AsyncSession) -> Dict[str, Any]:
-    """
-    Scrape AERC website for events.
-    
-    Args:
-        db: Database session
+async def run_all_scrapers(db: AsyncSession) -> Dict[str, Any]:
+    """Run all registered scrapers."""
+    try:
+        logger.info("Running all scrapers")
+        results = await _scraper_manager.run_all_scrapers(db)
         
-    Returns:
-        Dictionary with scraping results
-    """
-    # Placeholder implementation
-    logger.info("AERC scraper not yet implemented")
-    return {"events_found": 0, "events_added": 0}
-
-
-async def scrape_facebook(db: AsyncSession) -> Dict[str, Any]:
-    """
-    Scrape Facebook for events.
-    
-    Args:
-        db: Database session
+        # Get summary metrics
+        metrics = _scraper_manager.get_metrics_summary()
         
-    Returns:
-        Dictionary with scraping results
-    """
-    # Placeholder implementation
-    logger.info("Facebook scraper not yet implemented")
-    return {"events_found": 0, "events_added": 0}
+        return {
+            "status": "success",
+            "scrapers_run": len(results.get("scrapers", {})),
+            "total_events_found": metrics["total_events_found"],
+            "total_events_added": metrics["total_events_added"],
+            "success_rate": metrics["success_rate"],
+            "errors": len(results.get("errors", [])),
+            "error_details": results.get("errors", [])
+        }
+    except Exception as e:
+        logger.exception(f"Error running scrapers: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+def get_available_scrapers() -> List[str]:
+    """Get list of registered scraper IDs."""
+    return _scraper_manager.get_registered_scrapers()
+
+def get_scraper_results(scraper_id: str = None) -> Dict[str, Any]:
+    """Get results for a specific scraper or all scrapers."""
+    return _scraper_manager.get_results(scraper_id)

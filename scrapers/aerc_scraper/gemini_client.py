@@ -7,15 +7,15 @@ import json
 import asyncio
 from typing import List, Dict, Any, Optional
 from google import genai
-from .config import ScraperSettings
-from .exceptions import GeminiAPIError
+from ..config import get_scraper_settings
+from ..exceptions import APIError, DataExtractionError
 
 logger = logging.getLogger(__name__)
 
 class GeminiClient:
     """Client for interacting with Google's Gemini API."""
     
-    def __init__(self, settings: ScraperSettings):
+    def __init__(self, settings):
         self.settings = settings
         genai.configure(api_key=settings.gemini_api_key)
         
@@ -119,11 +119,13 @@ class GeminiClient:
                 self.metrics['fallback_successes'] += 1
                 return result
             
-            raise GeminiAPIError(f"Both models failed to extract data from chunk {chunk_idx}")
+            raise APIError("Gemini", f"Both models failed to extract data from chunk {chunk_idx}")
             
         except Exception as e:
             self.metrics['errors'] += 1
-            raise GeminiAPIError(f"Data extraction failed: {str(e)}")
+            if isinstance(e, APIError):
+                raise
+            raise APIError("Gemini", f"Data extraction failed: {str(e)}")
     
     def _process_response(self, response: Any, chunk_idx: int) -> Optional[List[Dict[str, Any]]]:
         """Process and validate Gemini API response."""

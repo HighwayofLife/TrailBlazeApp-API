@@ -1,154 +1,178 @@
-"""
-Data validation module using pydantic models.
-"""
+"""AERC event data validation module."""
 
 import logging
-import hashlib
+from typing import List, Dict, Any
 from datetime import datetime
-import re
-from typing import List, Dict, Any, Optional, Set
-from pydantic import BaseModel, Field, validator, EmailStr
-from .exceptions import ValidationError
+from pydantic import ValidationError
+
+from ..schema import AERCEvent, EventSourceEnum, EventTypeEnum, validate_event
+from ..exceptions import ValidationError as ScraperValidationError
 
 logger = logging.getLogger(__name__)
-
-class RideManagerContact(BaseModel):
-    """Ride manager contact information."""
-    name: Optional[str] = Field(None, description="Name of the ride manager")
-    email: Optional[EmailStr] = Field(None, description="Email of the ride manager")
-    phone: Optional[str] = Field(None, description="Phone number of the ride manager")
-    
-    @validator('phone')
-    def validate_phone(cls, v):
-        """Validate phone number format."""
-        if v:
-            # Remove all non-digit characters
-            digits = re.sub(r'[^\d+]', '', v)
-            if not re.match(r'^\+?\d{10,}$', digits):
-                raise ValueError("Invalid phone number format")
-            return digits
-        return v
-
-class ControlJudge(BaseModel):
-    """Control judge information."""
-    role: str = Field(..., description="Role of the judge (e.g., Head Control Judge)")
-    name: str = Field(..., description="Name of the judge")
-
-class Distance(BaseModel):
-    """Ride distance information."""
-    distance: str = Field(..., description="Distance of the ride")
-    date: str = Field(..., description="Date of the ride (YYYY-MM-DD)")
-    startTime: Optional[str] = Field(None, description="Start time of the ride")
-    
-    @validator('date')
-    def validate_date(cls, v):
-        """Validate date format."""
-        try:
-            datetime.strptime(v, '%Y-%m-%d')
-            return v
-        except ValueError:
-            raise ValueError("Invalid date format, should be YYYY-MM-DD")
-
-class AERCEvent(BaseModel):
-    """AERC event information."""
-    rideName: str = Field(..., description="Name of the ride")
-    date: str = Field(..., description="Primary date of the event (YYYY-MM-DD)")
-    region: str = Field(..., description="AERC region")
-    location: str = Field(..., description="Location of the event")
-    distances: List[Distance] = Field(default_factory=list, description="Available ride distances")
-    rideManager: Optional[str] = Field(None, description="Name of the ride manager")
-    rideManagerContact: Optional[RideManagerContact] = Field(None, description="Contact details for the ride manager")
-    controlJudges: List[ControlJudge] = Field(default_factory=list, description="Control judges for the event")
-    mapLink: Optional[str] = Field(None, description="Google Maps link to the event location")
-    hasIntroRide: Optional[bool] = Field(False, description="Whether the event has an intro ride")
-    tag: Optional[int] = Field(None, description="External ID for the event")
-    
-    @validator('date')
-    def validate_date(cls, v):
-        """Validate date format."""
-        try:
-            datetime.strptime(v, '%Y-%m-%d')
-            return v
-        except ValueError:
-            raise ValueError("Invalid date format, should be YYYY-MM-DD")
-    
-    @validator('mapLink')
-    def validate_map_link(cls, v):
-        """Validate Google Maps link."""
-        if v and not v.startswith(('https://maps.google.com', 'https://www.google.com/maps')):
-            raise ValueError("Invalid Google Maps link")
-        return v
 
 class DataValidator:
     """Validates extracted event data."""
     
     def __init__(self):
+        """Initialize validator."""
         self.metrics = {
-            'events_found': 0,
-            'events_valid': 0,
-            'events_duplicate': 0,
-            'validation_errors': 0
+            'validated': 0,
+            'invalid': 0,
+            'validation_time': 0.0
         }
-        self.seen_events: Set[str] = set()
     
     def validate_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Validate and clean extracted events data."""
-        self.metrics['events_found'] = len(events)
+        """Validate extracted event data."""
+        if not events:
+            logger.warning("No events to validate")
+            return []
+        
         valid_events = []
+        start_time = datetime.now()
         
-        for event in events:
+        for event_data in events:
             try:
-                # Generate event identifier for deduplication
-                event_key = f"{event.get('rideName', '')}-{event.get('date', '')}-{event.get('location', '')}"
-                if event_key in self.seen_events:
-                    self.metrics['events_duplicate'] += 1
-                    logger.debug(f"Skipping duplicate event: {event_key}")
-                    continue
-                self.seen_events.add(event_key)
+                # Ensure required base fields are present
+                self._check_required_fields(event_data)
                 
-                # Fill in defaults for required fields
-                event['rideName'] = event.get('rideName', 'Untitled AERC Event').strip()
-                event['region'] = event.get('region', 'Unknown Region').strip()
-                event['date'] = event.get('date')
+                # Add AERC-specific fields
+                event_data['source'] = EventSourceEnum.AERC
+                if 'event_type' not in event_data:
+                    event_data['event_type'] = EventTypeEnum.ENDURANCE
                 
-                if not event['date']:
-                    self.metrics['validation_errors'] += 1
-                    logger.warning(f"Skipping event with no date: {event['rideName']}")
-                    continue
+                # Convert dates to proper format
+                self._convert_dates(event_data)
                 
-                # Clean location
-                event['location'] = event.get('location', 'Location TBA').strip()
-                if event['location'].lower() in ['tba', 'to be announced']:
-                    event['location'] = 'Location TBA'
+                # Structure location data
+                if 'location' in event_data and isinstance(event_data['location'], str):
+                    event_data['location'] = self._parse_location(event_data['location'])
                 
-                # Generate tag if missing
-                if not event.get('tag'):
-                    event['tag'] = int(hashlib.md5(
-                        f"{event['rideName']}-{event['date']}-{event['location']}".encode()
-                    ).hexdigest()[:8], 16)
+                # Structure contact information
+                self._structure_contacts(event_data)
                 
-                # Validate through pydantic model
-                validated_event = AERCEvent.model_validate(event)
+                # Structure distances
+                if 'distances' in event_data:
+                    event_data['distances'] = self._structure_distances(
+                        event_data['distances'],
+                        event_data.get('date_start')
+                    )
+                
+                # Validate against schema
+                validated_event = validate_event(event_data, EventSourceEnum.AERC)
                 valid_events.append(validated_event.model_dump())
+                self.metrics['validated'] += 1
                 
-            except ValueError as e:
-                self.metrics['validation_errors'] += 1
-                logger.error(f"Validation error for event: {str(e)}")
-                continue
-                
-            except Exception as e:
-                self.metrics['validation_errors'] += 1
-                logger.error(f"Error validating event: {str(e)}")
+            except (ValidationError, ValueError, ScraperValidationError) as e:
+                self.metrics['invalid'] += 1
+                logger.error(f"Validation error for event {event_data.get('name', 'Unknown')}: {str(e)}")
                 continue
         
-        self.metrics['events_valid'] = len(valid_events)
-        logger.info(
-            f"Validated {len(valid_events)} out of {len(events)} events "
-            f"({self.metrics['validation_errors']} errors, "
-            f"{self.metrics['events_duplicate']} duplicates)"
-        )
+        self.metrics['validation_time'] = (datetime.now() - start_time).total_seconds()
+        
+        if not valid_events:
+            logger.warning("No events passed validation")
+        else:
+            logger.info(f"Validated {len(valid_events)} events")
+        
         return valid_events
     
-    def get_metrics(self) -> dict:
+    def _check_required_fields(self, event_data: Dict[str, Any]) -> None:
+        """Check required fields are present."""
+        required_fields = {'name', 'date_start', 'location'}
+        missing_fields = required_fields - set(event_data.keys())
+        
+        if missing_fields:
+            raise ScraperValidationError(
+                f"Missing required fields: {', '.join(missing_fields)}"
+            )
+    
+    def _convert_dates(self, event_data: Dict[str, Any]) -> None:
+        """Convert date strings to datetime objects."""
+        date_fields = ['date_start', 'date_end']
+        for field in date_fields:
+            if field in event_data and isinstance(event_data[field], str):
+                try:
+                    # Try common date formats
+                    for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M:%S']:
+                        try:
+                            event_data[field] = datetime.strptime(
+                                event_data[field], fmt
+                            )
+                            break
+                        except ValueError:
+                            continue
+                except Exception as e:
+                    raise ScraperValidationError(f"Invalid date format in {field}: {str(e)}")
+    
+    def _parse_location(self, location_str: str) -> Dict[str, Any]:
+        """Parse location string into structured data."""
+        location_data = {"name": location_str}
+        
+        # Try to extract city and state
+        # Example format: "Venue Name, City, ST"
+        parts = location_str.split(',')
+        if len(parts) >= 2:
+            location_data['name'] = parts[0].strip()
+            location_data['city'] = parts[1].strip()
+            if len(parts) >= 3:
+                location_data['state'] = parts[2].strip()
+        
+        return location_data
+    
+    def _structure_contacts(self, event_data: Dict[str, Any]) -> None:
+        """Structure contact information."""
+        contacts = []
+        
+        # Add ride manager if present
+        if 'ride_manager' in event_data:
+            manager_contact = {
+                'name': event_data['ride_manager'],
+                'role': 'Ride Manager'
+            }
+            if 'ride_manager_email' in event_data:
+                manager_contact['email'] = event_data['ride_manager_email']
+            if 'ride_manager_phone' in event_data:
+                manager_contact['phone'] = event_data['ride_manager_phone']
+            contacts.append(manager_contact)
+        
+        # Add control judges if present
+        if 'control_judges' in event_data:
+            if isinstance(event_data['control_judges'], list):
+                for judge in event_data['control_judges']:
+                    if isinstance(judge, str):
+                        contacts.append({
+                            'name': judge,
+                            'role': 'Control Judge'
+                        })
+                    elif isinstance(judge, dict):
+                        judge['role'] = judge.get('role', 'Control Judge')
+                        contacts.append(judge)
+        
+        event_data['contacts'] = contacts
+    
+    def _structure_distances(
+        self,
+        distances: List[Any],
+        event_date: datetime
+    ) -> List[Dict[str, Any]]:
+        """Structure distance information."""
+        structured_distances = []
+        
+        for distance in distances:
+            if isinstance(distance, str):
+                # Simple distance string
+                structured_distances.append({
+                    'distance': distance,
+                    'date': event_date
+                })
+            elif isinstance(distance, dict):
+                # Already structured, ensure date is present
+                if 'date' not in distance:
+                    distance['date'] = event_date
+                structured_distances.append(distance)
+        
+        return structured_distances
+    
+    def get_metrics(self) -> Dict[str, Any]:
         """Get validation metrics."""
         return self.metrics.copy()

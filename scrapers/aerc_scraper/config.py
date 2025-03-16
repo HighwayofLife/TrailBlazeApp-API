@@ -1,19 +1,15 @@
-"""
-Configuration management for AERC scraper using pydantic settings.
-"""
+"""Configuration management for AERC scraper."""
 
-from pydantic_settings import BaseSettings
-from typing import List, Dict, Any
 from functools import lru_cache
+from typing import Dict, Any
+from pydantic_settings import BaseSettings
 
-class ScraperSettings(BaseSettings):
-    """Scraper configuration settings."""
-    # Network settings
-    max_retries: int = 3
-    retry_delay: int = 5
-    request_timeout: int = 30
+from ..config import ScraperBaseSettings
+
+class AERCScraperSettings(ScraperBaseSettings):
+    """AERC-specific scraper settings."""
     
-    # Gemini API settings
+    # AERC API settings
     gemini_api_key: str = ""
     primary_model: str = "gemini-2.0-flash-lite"
     fallback_model: str = "gemini-2.0-flash"
@@ -26,41 +22,32 @@ class ScraperSettings(BaseSettings):
     max_chunk_size: int = 45000
     chunk_adjust_factor: float = 0.75
     
-    # Cache settings
-    cache_ttl: int = 3600  # 1 hour in seconds
-    cache_dir: str = "cache"
-    
-    # Debug settings
-    debug_mode: bool = False
-    refresh_cache: bool = False
-    validate_mode: bool = False
-    
-    # HTTP Headers
-    default_headers: Dict[str, str] = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Referer": "https://aerc.org/",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1"
-    }
-    
-    # URLs
+    # AERC URLs
     base_url: str = "https://aerc.org/wp-admin/admin-ajax.php"
     calendar_url: str = "https://aerc.org/calendar"
+    
+    # Additional headers for AERC site
+    @property
+    def http_headers(self) -> Dict[str, str]:
+        """Get headers for AERC requests."""
+        headers = self.default_headers.copy()
+        headers.update({
+            "Referer": "https://aerc.org/",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1"
+        })
+        return headers
     
     class Config:
         env_prefix = "AERC_"
         case_sensitive = False
         env_file = ".env"
-        extra = "ignore"  # Allow extra fields in validation
+        extra = "ignore"  # Ignore unknown fields
 
 @lru_cache()
-def get_settings() -> ScraperSettings:
+def get_settings(base_settings: ScraperBaseSettings = None) -> AERCScraperSettings:
     """Get cached settings instance."""
-    return ScraperSettings()
+    return AERCScraperSettings()

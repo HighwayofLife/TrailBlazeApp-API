@@ -9,6 +9,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..base_scraper import BaseScraper
 from .config import ScraperSettings, get_settings
 from .network import NetworkHandler
 from .html_cleaner import HtmlCleaner
@@ -22,25 +23,59 @@ from .exceptions import ScraperError
 
 logger = logging.getLogger(__name__)
 
-class AERCScraper:
+class AERCScraper(BaseScraper):
     """Enhanced AERC calendar scraper with modular architecture."""
     
-    def __init__(self, settings: Optional[ScraperSettings] = None):
+    def __init__(
+        self,
+        settings: Optional[ScraperSettings] = None,
+        network_handler: Optional[NetworkHandler] = None,
+        html_cleaner: Optional[HtmlCleaner] = None,
+        gemini_client: Optional[GeminiClient] = None,
+        data_validator: Optional[DataValidator] = None,
+        data_converter: Optional[DataConverter] = None,
+        db_handler: Optional[DatabaseHandler] = None,
+        cache: Optional[Cache] = None,
+        metrics: Optional[ScraperMetrics] = None,
+        logger: Optional[logging.Logger] = None
+    ):
         """Initialize scraper with dependencies."""
+        super().__init__("AERC Calendar", logger or logging.getLogger(__name__))
+        
         self.settings = settings or get_settings()
-        
-        # Initialize components
-        self.network = NetworkHandler(self.settings)
-        self.html_cleaner = HtmlCleaner()
-        self.gemini_client = GeminiClient(self.settings)
-        self.validator = DataValidator()
-        self.converter = DataConverter()
-        self.db_handler = DatabaseHandler()
-        self.cache = Cache(self.settings)
-        
-        # Initialize metrics
-        self.metrics = ScraperMetrics(start_time=datetime.now())
+        self.network = network_handler or NetworkHandler(self.settings)
+        self.html_cleaner = html_cleaner or HtmlCleaner()
+        self.gemini_client = gemini_client or GeminiClient(self.settings)
+        self.validator = data_validator or DataValidator()
+        self.converter = data_converter or DataConverter()
+        self.db_handler = db_handler or DatabaseHandler()
+        self.cache = cache or Cache(self.settings)
+        self.metrics = metrics or ScraperMetrics(start_time=datetime.now())
     
+    def clean_data(self, raw_data: str) -> str:
+        """Clean and preprocess raw data."""
+        return self.html_cleaner.clean(raw_data)
+    
+    def validate_data(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Validate extracted data."""
+        return self.validator.validate_events(data)
+    
+    def convert_to_db_schema(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert validated data to database schema."""
+        return self.converter.convert_to_db_events(data)
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get combined metrics from all components."""
+        metrics = {
+            **self.network.get_metrics(),
+            **self.html_cleaner.get_metrics(),
+            **self.gemini_client.get_metrics(),
+            **self.validator.get_metrics(),
+            **self.cache.get_metrics()
+        }
+        self.metrics.update(metrics)
+        return self.metrics.to_dict()
+
     async def extract_season_ids(self) -> List[str]:
         """Extract season IDs from calendar page."""
         try:
@@ -130,13 +165,12 @@ class AERCScraper:
             
             # 3. Clean HTML
             logger.info("Cleaning HTML")
-            cleaned_html = self.html_cleaner.clean(html)
+            cleaned_html = self.clean_data(html)
             if not cleaned_html:
                 raise ScraperError("Failed to clean HTML")
             
             # 4. Extract structured data using Gemini
             logger.info("Extracting structured data")
-            # Split HTML into chunks and process
             chunks = self._chunk_html(cleaned_html)
             all_events = []
             
@@ -150,13 +184,13 @@ class AERCScraper:
             
             # 5. Validate events
             logger.info("Validating events")
-            valid_events = self.validator.validate_events(all_events)
+            valid_events = self.validate_data(all_events)
             if not valid_events:
                 raise ScraperError("No valid events found")
             
             # 6. Convert to database schema
             logger.info("Converting to database schema")
-            db_events = self.converter.convert_to_db_events(valid_events)
+            db_events = self.convert_to_db_schema(valid_events)
             if not db_events:
                 raise ScraperError("Failed to convert events to database schema")
             
