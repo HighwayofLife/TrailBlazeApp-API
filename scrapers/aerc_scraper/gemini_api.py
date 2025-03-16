@@ -1,10 +1,8 @@
 """Google Gemini API integration for event extraction."""
 
 import json
-import asyncio
 from typing import List, Dict, Any
-import google.generativeai as genai
-from google.generativeai.types import AsyncGenerativeModel
+from google import genai
 
 from ..exceptions import AIError
 
@@ -19,7 +17,7 @@ class GeminiAPI:
         """
         self.api_key = api_key
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+        self.client = genai.Client()
         
         # Extraction prompt template
         self.prompt_template = """
@@ -59,8 +57,11 @@ class GeminiAPI:
             # Generate prompt
             prompt = self.prompt_template.format(html_content=cleaned_content)
             
-            # Get completion from Gemini
-            response = await self.model.generate_content_async(prompt)
+            # Get completion from Gemini using the flash model for faster responses
+            response = await self.client.models.generate_content_async(
+                model="gemini-2.0-flash",
+                contents=[{"role": "user", "parts": [{"text": prompt}]}]
+            )
             
             if not response.text:
                 raise AIError("Empty response from Gemini API")

@@ -1,7 +1,7 @@
 """Tests for Gemini API integration."""
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 import json
 
 from scrapers.aerc_scraper.gemini_api import GeminiAPI
@@ -42,11 +42,12 @@ def sample_response():
 @pytest.mark.asyncio
 async def test_successful_extraction(api, sample_html, sample_response):
     """Test successful event extraction."""
-    with patch('google.generativeai.GenerativeModel') as mock_model:
+    with patch('google.genai.Client') as mock_client:
         # Setup mock response
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.text = json.dumps(sample_response)
-        mock_model.return_value.generate_content_async = AsyncMock(return_value=mock_response)
+        mock_client.return_value.models.generate_content_async = AsyncMock(return_value=mock_response)
+        api.client = mock_client.return_value
         
         events = await api.extract_events(sample_html)
         
@@ -60,10 +61,11 @@ async def test_successful_extraction(api, sample_html, sample_response):
 @pytest.mark.asyncio
 async def test_empty_response(api, sample_html):
     """Test handling of empty API response."""
-    with patch('google.generativeai.GenerativeModel') as mock_model:
-        mock_response = AsyncMock()
+    with patch('google.genai.Client') as mock_client:
+        mock_response = MagicMock()
         mock_response.text = ""
-        mock_model.return_value.generate_content_async = AsyncMock(return_value=mock_response)
+        mock_client.return_value.models.generate_content_async = AsyncMock(return_value=mock_response)
+        api.client = mock_client.return_value
         
         with pytest.raises(AIError, match="Empty response from Gemini API"):
             await api.extract_events(sample_html)
@@ -71,10 +73,11 @@ async def test_empty_response(api, sample_html):
 @pytest.mark.asyncio
 async def test_invalid_json_response(api, sample_html):
     """Test handling of invalid JSON response."""
-    with patch('google.generativeai.GenerativeModel') as mock_model:
-        mock_response = AsyncMock()
+    with patch('google.genai.Client') as mock_client:
+        mock_response = MagicMock()
         mock_response.text = "Invalid JSON {{"
-        mock_model.return_value.generate_content_async = AsyncMock(return_value=mock_response)
+        mock_client.return_value.models.generate_content_async = AsyncMock(return_value=mock_response)
+        api.client = mock_client.return_value
         
         with pytest.raises(AIError, match="Failed to parse Gemini response as JSON"):
             await api.extract_events(sample_html)
@@ -82,13 +85,14 @@ async def test_invalid_json_response(api, sample_html):
 @pytest.mark.asyncio
 async def test_missing_required_fields(api, sample_html):
     """Test handling of response missing required fields."""
-    with patch('google.generativeai.GenerativeModel') as mock_model:
-        mock_response = AsyncMock()
+    with patch('google.genai.Client') as mock_client:
+        mock_response = MagicMock()
         mock_response.text = json.dumps({
             "name": "Test Event",
             # missing date and location
         })
-        mock_model.return_value.generate_content_async = AsyncMock(return_value=mock_response)
+        mock_client.return_value.models.generate_content_async = AsyncMock(return_value=mock_response)
+        api.client = mock_client.return_value
         
         with pytest.raises(AIError, match="No valid events found in extracted data"):
             await api.extract_events(sample_html)
@@ -109,10 +113,11 @@ async def test_multiple_events(api, sample_html):
         }
     ]
     
-    with patch('google.generativeai.GenerativeModel') as mock_model:
-        mock_response = AsyncMock()
+    with patch('google.genai.Client') as mock_client:
+        mock_response = MagicMock()
         mock_response.text = json.dumps(events)
-        mock_model.return_value.generate_content_async = AsyncMock(return_value=mock_response)
+        mock_client.return_value.models.generate_content_async = AsyncMock(return_value=mock_response)
+        api.client = mock_client.return_value
         
         extracted = await api.extract_events(sample_html)
         
@@ -141,10 +146,11 @@ def test_html_cleaning(api):
 @pytest.mark.asyncio
 async def test_api_error_handling(api, sample_html):
     """Test handling of API errors."""
-    with patch('google.generativeai.GenerativeModel') as mock_model:
-        mock_model.return_value.generate_content_async = AsyncMock(
+    with patch('google.genai.Client') as mock_client:
+        mock_client.return_value.models.generate_content_async = AsyncMock(
             side_effect=Exception("API Error")
         )
+        api.client = mock_client.return_value
         
         with pytest.raises(AIError, match="Gemini API extraction failed: API Error"):
             await api.extract_events(sample_html)

@@ -7,7 +7,7 @@ import json
 import asyncio
 from typing import List, Dict, Any, Optional
 from google import genai
-from ..config import get_scraper_settings
+from .config import get_settings  # Changed from ..config import get_scraper_settings
 from ..exceptions import APIError, DataExtractionError
 
 logger = logging.getLogger(__name__)
@@ -18,13 +18,7 @@ class GeminiClient:
     def __init__(self, settings):
         self.settings = settings
         genai.configure(api_key=settings.gemini_api_key)
-        
-        self.client = genai.GenerationConfig(
-            temperature=settings.temperature,
-            candidate_count=1,
-            max_output_tokens=settings.max_output_tokens,
-            response_mime_type="application/json"
-        )
+        self.client = genai.Client()
         
         self.metrics = {
             'calls': 0,
@@ -88,12 +82,10 @@ class GeminiClient:
             # Try primary model first
             try:
                 prompt = self._create_prompt(html_chunk)
-                response = await asyncio.to_thread(
-                    lambda: genai.generate_text(
-                        model=self.settings.primary_model,
-                        prompt=prompt,
-                        generation_config=self.client
-                    )
+                response = await self.client.models.generate_content_async(
+                    model=self.settings.primary_model,
+                    contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                    generation_config={"temperature": self.settings.temperature}
                 )
                 
                 result = self._process_response(response, chunk_idx)
@@ -106,12 +98,10 @@ class GeminiClient:
             
             # Try fallback model
             logger.info(f"Using fallback model for chunk {chunk_idx}")
-            response = await asyncio.to_thread(
-                lambda: genai.generate_text(
-                    model=self.settings.fallback_model,
-                    prompt=prompt,
-                    generation_config=self.client
-                )
+            response = await self.client.models.generate_content_async(
+                model=self.settings.fallback_model,
+                contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                generation_config={"temperature": self.settings.temperature}
             )
             
             result = self._process_response(response, chunk_idx)

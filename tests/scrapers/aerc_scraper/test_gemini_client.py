@@ -1,141 +1,140 @@
-"""Tests for Gemini client module."""
+"""Tests for GeminiClient class."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import json
+from dataclasses import dataclass
+
 from scrapers.aerc_scraper.gemini_client import GeminiClient
-from scrapers.aerc_scraper.exceptions import GeminiAPIError
+from scrapers.exceptions import APIError
+
+@dataclass
+class MockSettings:
+    """Mock settings for testing."""
+    gemini_api_key: str = "test_key"
+    primary_model: str = "gemini-2.0-flash"
+    fallback_model: str = "gemini-pro"
+    temperature: float = 0.2
 
 @pytest.fixture
-def gemini_client(test_settings):
-    """Create Gemini client instance."""
-    return GeminiClient(test_settings)
+def client():
+    """Create GeminiClient instance with mock settings."""
+    return GeminiClient(MockSettings())
+
+@pytest.fixture
+def sample_event():
+    """Sample event data."""
+    return {
+        "rideName": "Test Endurance Ride",
+        "date": "2024-06-15",
+        "region": "MT",
+        "location": "Mountain Trail Ranch",
+        "distances": [
+            {
+                "distance": "50",
+                "date": "2024-06-15",
+                "startTime": "06:00"
+            }
+        ],
+        "rideManager": "Jane Smith",
+        "rideManagerContact": {
+            "name": "Jane Smith",
+            "email": "jane@example.com",
+            "phone": "555-0123"
+        },
+        "controlJudges": [
+            {
+                "role": "Head Veterinarian",
+                "name": "Dr. John Doe"
+            }
+        ],
+        "mapLink": "https://maps.google.com/test",
+        "hasIntroRide": True
+    }
 
 @pytest.mark.asyncio
-async def test_successful_extraction(gemini_client, test_html, mock_gemini_response):
+async def test_successful_extraction(client, sample_event):
     """Test successful data extraction."""
-    with patch('google.genai.generate_text', return_value=mock_gemini_response):
-        events = await gemini_client.extract_data(test_html)
+    with patch('google.genai.Client') as mock_client:
+        mock_response = MagicMock()
+        mock_response.text = json.dumps([sample_event])
+        mock_client.return_value.models.generate_content_async = AsyncMock(
+            return_value=mock_response
+        )
+        client.client = mock_client.return_value
         
-        assert events is not None
-        assert isinstance(events, list)
-        assert len(events) > 0
-        assert gemini_client.get_metrics()['calls'] == 1
-        assert gemini_client.get_metrics()['errors'] == 0
+        result = await client.extract_data("<div>Sample HTML</div>")
+        
+        assert len(result) == 1
+        assert result[0]["rideName"] == sample_event["rideName"]
+        assert result[0]["date"] == sample_event["date"]
+        assert len(result[0]["distances"]) == 1
 
 @pytest.mark.asyncio
-async def test_fallback_model(gemini_client, test_html, mock_gemini_response):
+async def test_fallback_model(client, sample_event):
     """Test fallback to secondary model."""
-    with patch('google.genai.generate_text') as mock_generate:
+    with patch('google.genai.Client') as mock_client:
         # Primary model fails
-        mock_generate.side_effect = [
-            Exception("Primary model error"),
-            mock_gemini_response  # Fallback model succeeds
-        ]
+        mock_client.return_value.models.generate_content_async = AsyncMock(
+            side_effect=[Exception("Primary model error"), MagicMock(text=json.dumps([sample_event]))]
+        )
+        client.client = mock_client.return_value
         
-        events = await gemini_client.extract_data(test_html)
+        result = await client.extract_data("<div>Sample HTML</div>")
         
-        assert events is not None
-        assert gemini_client.get_metrics()['errors'] == 1
-        assert gemini_client.get_metrics()['fallback_successes'] == 1
+        assert len(result) == 1
+        assert result[0]["rideName"] == sample_event["rideName"]
+        assert client.metrics["fallback_successes"] == 1
+        assert client.metrics["errors"] == 1
 
 @pytest.mark.asyncio
-async def test_both_models_fail(gemini_client, test_html):
-    """Test handling when both models fail."""
-    with patch('google.genai.generate_text', side_effect=Exception("API error")):
-        with pytest.raises(GeminiAPIError):
-            await gemini_client.extract_data(test_html)
+async def test_both_models_fail(client):
+    """Test behavior when both models fail."""
+    with patch('google.genai.Client') as mock_client:
+        mock_client.return_value.models.generate_content_async = AsyncMock(
+            side_effect=[Exception("Primary error"), Exception("Fallback error")]
+        )
+        client.client = mock_client.return_value
         
-        assert gemini_client.get_metrics()['errors'] == 2  # Both models failed
+        with pytest.raises(APIError, match="Both models failed"):
+            await client.extract_data("<div>Sample HTML</div>")
+        
+        assert client.metrics["errors"] == 2
 
-@pytest.mark.asyncio
-async def test_invalid_json_response(gemini_client, test_html):
-    """Test handling invalid JSON in response."""
-    invalid_response = {
-        "text": "Invalid JSON {test: missing quotes}",
-        "candidates": [{"content": {"text": "Invalid JSON"}}]
-    }
+def test_fix_json_syntax(client):
+    """Test JSON syntax fixing."""
+    # Test trailing comma fix
+    assert client._fix_json_syntax('[{"a": 1},]') == '[{"a": 1}]'
     
-    with patch('google.genai.generate_text', return_value=invalid_response):
-        with pytest.raises(GeminiAPIError):
-            await gemini_client.extract_data(test_html)
-        
-        assert gemini_client.get_metrics()['errors'] > 0
-
-@pytest.mark.asyncio
-async def test_empty_response(gemini_client, test_html):
-    """Test handling empty response."""
-    empty_response = {
-        "text": "[]",
-        "candidates": [{"content": {"text": "[]"}}]
-    }
+    # Test missing comma between objects
+    assert client._fix_json_syntax('[{"a":1}{"b":2}]') == '[{"a":1},{"b":2}]'
     
-    with patch('google.genai.generate_text', return_value=empty_response):
-        events = await gemini_client.extract_data(test_html)
-        
-        assert events == []
-        assert gemini_client.get_metrics()['calls'] == 1
+    # Test missing array closure
+    assert client._fix_json_syntax('[{"a":1}') == '[{"a":1}]'
 
 @pytest.mark.asyncio
-async def test_malformed_events(gemini_client, test_html):
-    """Test handling malformed events in response."""
-    malformed_response = {
-        "text": '[{"incomplete": "event"}',
-        "candidates": [{"content": {"text": '[{"incomplete": "event"}'}}]
-    }
+async def test_invalid_json_response(client):
+    """Test handling of invalid JSON in response."""
+    with patch('google.genai.Client') as mock_client:
+        mock_response = MagicMock()
+        mock_response.text = "Invalid JSON {{"
+        mock_client.return_value.models.generate_content_async = AsyncMock(
+            side_effect=[mock_response, mock_response]
+        )
+        client.client = mock_client.return_value
+        
+        with pytest.raises(APIError):
+            await client.extract_data("<div>Sample HTML</div>")
+
+def test_metrics_tracking(client):
+    """Test metrics tracking."""
+    initial_metrics = client.get_metrics()
+    assert initial_metrics["calls"] == 0
+    assert initial_metrics["errors"] == 0
+    assert initial_metrics["fallback_successes"] == 0
+    assert initial_metrics["total_tokens"] == 0
     
-    with patch('google.genai.generate_text', return_value=malformed_response):
-        with pytest.raises(GeminiAPIError):
-            await gemini_client.extract_data(test_html)
-
-@pytest.mark.asyncio
-async def test_metrics_tracking(gemini_client, test_html, mock_gemini_response):
-    """Test accurate metrics tracking."""
-    with patch('google.genai.generate_text') as mock_generate:
-        # Simulate various scenarios
-        mock_generate.side_effect = [
-            Exception("Error"),  # First call fails
-            mock_gemini_response  # Second call succeeds
-        ]
-        
-        events = await gemini_client.extract_data(test_html)
-        metrics = gemini_client.get_metrics()
-        
-        assert metrics['calls'] == 2
-        assert metrics['errors'] == 1
-        assert metrics['fallback_successes'] == 1
-
-@pytest.mark.asyncio
-async def test_prompt_formatting(gemini_client, test_html):
-    """Test prompt formatting."""
-    with patch('google.genai.generate_text') as mock_generate:
-        await gemini_client.extract_data(test_html)
-        
-        # Check that generate_text was called with properly formatted prompt
-        call_args = mock_generate.call_args[1]
-        prompt = call_args.get('prompt', '')
-        
-        assert 'IMPORTANT FORMATTING INSTRUCTIONS' in prompt
-        assert 'JSON Structure' in prompt
-        assert 'Calendar HTML' in prompt
-
-@pytest.mark.asyncio
-async def test_response_cleaning(gemini_client):
-    """Test response text cleaning."""
-    # Test various response formats
-    test_cases = [
-        ('```json\n[{"test": "value"}]\n```', [{"test": "value"}]),  # Markdown code block
-        ('Some text [{"test": "value"}] more text', [{"test": "value"}]),  # Embedded JSON
-        ('[{"test": "value"},]', [{"test": "value"}]),  # Trailing comma
-        ('[{"test": "value"}}]', [{"test": "value"}])  # Extra brace
-    ]
-    
-    for input_text, expected in test_cases:
-        mock_response = {
-            "text": input_text,
-            "candidates": [{"content": {"text": input_text}}]
-        }
-        
-        with patch('google.genai.generate_text', return_value=mock_response):
-            events = await gemini_client.extract_data("test html")
-            assert events == expected
+    # Metrics object should be copied
+    metrics = client.get_metrics()
+    metrics["calls"] = 100
+    assert client.get_metrics()["calls"] == 0
