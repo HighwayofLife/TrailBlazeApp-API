@@ -25,5 +25,3 @@ An event object includes the following fields:
 | directions | String | Directions to the event location |
 | map_link | String | Link to a map for directions |
 | external_id | String | External identifier from the source system |
-
-# ...existing documentation...

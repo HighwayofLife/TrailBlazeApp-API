@@ -89,7 +89,7 @@ async def create_event(db: AsyncSession, event: EventCreate) -> Event:
     db_event = Event(
         name=event.name,
         description=event.description,
-        location_name=event.location,  # Map location to location_name
+        location=event.location,
         date_start=event.date_start,
         date_end=event.date_end,
         organizer=event.organizer,
@@ -133,10 +133,6 @@ async def update_event(db: AsyncSession, event_id: int, event: EventUpdate) -> O
     
     # Create a dictionary with only the fields that are not None
     update_data = {k: v for k, v in event.dict().items() if v is not None}
-    
-    # Map location to location_name if it exists
-    if 'location' in update_data:
-        update_data['location_name'] = update_data.pop('location')
     
     if update_data:
         # Update the event

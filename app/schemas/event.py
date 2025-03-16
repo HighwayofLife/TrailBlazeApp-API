@@ -44,6 +44,7 @@ class EventBase(BaseModel):
     event_type: Optional[str] = None 
     event_details: Optional[Dict[str, Any]] = None  # For semi-structured data
     notes: Optional[str] = None
+    source: str  # Required field to identify the data source
 
 class EventCreate(EventBase):
     """Schema for creating an event."""
