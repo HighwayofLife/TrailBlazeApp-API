@@ -1,22 +1,22 @@
 # FastAPI and related libraries
-fastapi>=0.103.1
-uvicorn==0.34.0
+fastapi>=0.109.2
+uvicorn>=0.27.1
 pydantic==2.10.6
 pydantic-settings>=2.0.3
-python-dotenv>=1.0.0
+python-dotenv>=1.0.1
 
 # Database
-sqlalchemy>=2.0.20
-alembic>=1.12.0
+sqlalchemy>=2.0.25
+alembic>=1.13.1
 psycopg2-binary==2.9.10
-asyncpg==0.30.0
+asyncpg>=0.29.0
 
 # HTTP client
 requests>=2.31.0
-aiohttp==3.11.13
+aiohttp>=3.9.3
 
 # Scraping
-beautifulsoup4>=4.12.2
+beautifulsoup4>=4.12.3
 scrapy>=2.10.0
 Brotli>=1.1.0
 
@@ -35,4 +35,5 @@ aiofiles==24.1.0
 tenacity>=8.2.3
 
 # Add to existing requirements
-google-generativeai==0.8.4
+google-generativeai>=0.3.2
+psutil>=5.9.8
