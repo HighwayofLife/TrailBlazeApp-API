@@ -1,464 +1,243 @@
 # Data Scraping Guide
 
-## Summary
+## Overview
 
-This document provides detailed information about the event data scraping system used in the TrailBlazeApp-API. It covers the design, implementation, scheduling, error handling, and maintenance of the scrapers that collect event data from various sources.
+The TrailBlazeApp-API uses a modular scraping system to collect endurance riding event data from various sources. The system is designed for reliability, maintainability, and extensibility.
 
-## Table of Contents
+## Architecture
 
-- [Scraping Architecture](#scraping-architecture)
-- [Supported Data Sources](#supported-data-sources)
-- [Scraper Implementation](#scraper-implementation)
-- [Scheduling and Automation](#scheduling-and-automation)
-- [Data Processing and Storage](#data-processing-and-storage)
-- [Error Handling and Monitoring](#error-handling-and-monitoring)
-- [Adding New Scrapers](#adding-new-scrapers)
-- [Maintenance and Updates](#maintenance-and-updates)
+### Component Overview
 
-## Scraping Architecture
-
-The data scraping system is designed as a separate service that runs independently of the main API. This separation allows for better scalability, fault isolation, and maintenance.
+```
+scrapers/
+├── __init__.py           # Package exports
+├── base_scraper.py      # Abstract base class
+├── config.py            # Shared configuration
+├── exceptions.py        # Custom exceptions
+├── scheduler.py         # Scheduling system
+├── run_scrapers.py      # CLI entry point
+└── aerc_scraper/        # AERC Calendar scraper
+    ├── __init__.py     # Package exports
+    ├── scraper.py      # Main scraper class
+    ├── config.py       # AERC-specific settings
+    ├── network.py      # Network handling
+    ├── html_cleaner.py # HTML preprocessing
+    ├── chunking.py     # Content chunking
+    ├── gemini_client.py # Gemini API client
+    ├── validator.py    # Data validation
+    ├── converter.py    # Schema conversion
+    ├── database.py     # Database operations
+    ├── cache.py        # Caching system
+    └── metrics.py      # Metrics collection
+```
 
 ### Key Components
 
-1. **Scraper Manager**: Coordinates the execution of individual scrapers and handles scheduling
-2. **Individual Scrapers**: Each responsible for extracting data from a specific source
-3. **Data Processor**: Normalizes and validates scraped data
-4. **Storage Interface**: Handles storing processed data in the database
+1. **Scraper Manager**: Coordinates scraper execution
+2. **Base Scraper**: Abstract class defining common interface
+3. **Configuration**: Environment-based settings
+4. **Scheduler**: Async job scheduling
+5. **Individual Scrapers**: Source-specific implementations
 
-### System Flow
+## AERC Calendar Scraper
 
+### Features
+
+- Modular architecture with clear separation of concerns
+- Intelligent HTML chunking for large responses
+- AI-powered data extraction using Google's Gemini API
+- Robust error handling and recovery
+- Comprehensive metrics collection
+- Caching with TTL and validation
+- Rate limiting and polite scraping
+
+### Configuration
+
+```env
+# Required settings
+AERC_GEMINI_API_KEY=your_api_key
+AERC_DATABASE_URL=postgresql://user:pass@host/db
+
+# Optional settings
+AERC_DEBUG_MODE=true           # Enable debug logging
+AERC_REFRESH_CACHE=false       # Force cache refresh
+AERC_CACHE_TTL=3600           # Cache TTL in seconds
+AERC_REQUESTS_PER_SECOND=1.0   # Rate limiting
 ```
-[Source Websites] → [Scrapers] → [Data Processor] → [Database] → [API]
+
+### Execution Flow
+
+1. Extract season IDs from calendar page
+2. Fetch calendar HTML using season IDs
+3. Clean and preprocess HTML
+4. Split HTML into manageable chunks
+5. Extract structured data using Gemini API
+6. Validate extracted data
+7. Convert to database schema
+8. Store in database with deduplication
+
+### Error Handling
+
+- Network errors: Automatic retry with backoff
+- API failures: Fallback to secondary model
+- Validation errors: Detailed error reporting
+- Cache issues: Automatic invalidation
+- Database errors: Transaction rollback
+
+### Cache Management
+
+The scraper implements a sophisticated caching system:
+
+1. **Cache Levels**:
+   - Raw HTML responses
+   - Structured JSON data
+   - Processed event data
+
+2. **Cache Validation**:
+   - TTL-based expiration
+   - Data consistency checks
+   - Row count validation
+
+3. **Force Refresh Conditions**:
+   - Manual trigger (SCRAPER_REFRESH=true)
+   - Validation failure 
+   - Schedule changes
+   - Data format changes
+
+### Metrics Collection
+
+Comprehensive metrics are collected from all components:
+
+- Network: requests, retries, errors
+- HTML: rows found, cleaning time
+- API: calls, success rate, latency
+- Validation: events found/valid/invalid
+- Cache: hits, misses, invalidations
+- Database: inserts, updates, conflicts
+- Performance: memory usage, duration
+
+## Adding New Scrapers
+
+1. Create new module:
+```
+scrapers/
+└── new_scraper/
+    ├── __init__.py
+    ├── scraper.py
+    ├── config.py
+    └── ...
 ```
 
-## Supported Data Sources
-
-The system currently scrapes the following data sources:
-
-1. **PNER Website**
-   - URL: https://www.pner.net/
-   - Data: Event listings, dates, locations
-   - Update frequency: Weekly
-
-2. **AERC Ride Calendar**
-   - URL: https://aerc.org/ride_calendar
-   - Data: National ride listings, AERC sanctioned events
-   - Update frequency: Weekly
-
-3. **AERC Calendar** (Enhanced Scraper)
-   - URL: https://aerc.org/calendar
-   - Data: Detailed event information with ride managers, distances, and locations
-   - Update frequency: Weekly
-   - Uses AI extraction: Yes (Gemini API)
-
-4. **Ride Managers' Websites**
-   - Various URLs based on event listings
-   - Data: Detailed event information, flyer PDFs
-   - Update frequency: Daily (for upcoming events)
-
-5. **Facebook Pages**
-   - Pages maintained by ride organizers
-   - Data: Announcements, updates, photos
-   - Update frequency: Daily (for upcoming events)
-
-## Scraper Implementation
-
-The scraping system is implemented using Python with the following libraries:
-
-- **Beautiful Soup**: For HTML parsing
-- **Scrapy**: For structured web scraping
-- **Requests**: For simple HTTP requests
-- **PyPDF2**: For extracting text from PDF flyers
-
-### Base Scraper Class
-
-All scrapers inherit from a common base class that provides shared functionality:
-
+2. Implement BaseScraper interface:
 ```python
-# Base scraper class
-class BaseScraper:
-    def __init__(self, source_name: str, logger=None):
-        self.source_name = source_name
-        self.logger = logger or logging.getLogger(__name__)
-        
-    async def scrape(self) -> List[dict]:
-        """
-        Execute the scraping operation and return event data.
-        Should be implemented by subclasses.
-        """
-        raise NotImplementedError
-        
-    async def process_results(self, raw_data: List[dict]) -> List[dict]:
-        """
-        Process the scraped data into a standard format.
-        """
-        processed_data = []
-        for item in raw_data:
-            try:
-                processed_item = self.normalize_data(item)
-                if self.validate_data(processed_item):
-                    processed_data.append(processed_item)
-            except Exception as e:
-                self.logger.error(f"Error processing item: {e}")
-                continue
-        return processed_data
-        
-    def normalize_data(self, item: dict) -> dict:
-        """
-        Convert source-specific data into the standard format.
-        """
-        # Basic implementation - subclasses should enhance this
-        return {
-            "name": item.get("title", "Unknown Event"),
-            "description": item.get("description", ""),
-            "location": item.get("location", ""),
-            "date_start": self.parse_date(item.get("start_date")),
-            "date_end": self.parse_date(item.get("end_date")),
-            "organizer": item.get("organizer", ""),
-            "website": item.get("url", ""),
-            "flyer_url": item.get("flyer_url", ""),
-            "region": self.determine_region(item.get("location", "")),
-            "distances": self.parse_distances(item.get("distances", [])),
-            "source": self.source_name
-        }
-        
-    def validate_data(self, item: dict) -> bool:
-        """
-        Validate that the item has all required fields.
-        """
-        required_fields = ["name", "location", "date_start"]
-        return all(item.get(field) for field in required_fields)
-        
-    def parse_date(self, date_str: Optional[str]) -> Optional[datetime]:
-        """
-        Parse date string into standard format.
-        """
-        # Implementation depends on source format
+class NewScraper(BaseScraper):
+    async def run(self, db: AsyncSession) -> Dict[str, Any]:
+        # Implementation
         pass
-        
-    def parse_distances(self, distances_data) -> List[str]:
-        """
-        Extract ride distances into a standard list.
-        """
-        # Implementation depends on source format
-        pass
-        
-    def determine_region(self, location: str) -> str:
-        """
-        Determine the region based on location.
-        """
-        # Simple implementation - could be enhanced with geo lookup
-        if not location:
-            return "Unknown"
-            
-        northwest = ["washington", "oregon", "idaho", "montana", "bc", "british columbia"]
-        for term in northwest:
-            if term.lower() in location.lower():
-                return "Pacific Northwest"
-                
-        # Additional regions could be added here
-        return "Other"
 ```
 
-### Example Scraper Implementation
-
-Here's an example of a specific scraper for the PNER website:
-
+3. Register in ScraperManager:
 ```python
-class PNERScraper(BaseScraper):
-    def __init__(self, logger=None):
-        super().__init__("PNER Website", logger)
-        self.base_url = "https://www.pner.net/"
-        self.calendar_url = f"{self.base_url}/calendar"
-        
-    async def scrape(self) -> List[dict]:
-        self.logger.info(f"Scraping events from {self.calendar_url}")
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(self.calendar_url)
-                response.raise_for_status()
-                
-            soup = BeautifulSoup(response.text, "html.parser")
-            events = []
-            
-            # Find event listings (simplified example)
-            event_elements = soup.select(".event-listing")
-            
-            for element in event_elements:
-                event = {}
-                event["title"] = element.select_one(".event-title").text.strip()
-                event["description"] = element.select_one(".event-description").text.strip()
-                event["location"] = element.select_one(".event-location").text.strip()
-                
-                date_element = element.select_one(".event-date")
-                event["start_date"] = date_element.get("data-start-date")
-                event["end_date"] = date_element.get("data-end-date")
-                
-                event["organizer"] = element.select_one(".event-organizer").text.strip()
-                event["url"] = element.select_one(".event-link")["href"]
-                
-                flyer_link = element.select_one(".event-flyer")
-                event["flyer_url"] = flyer_link["href"] if flyer_link else None
-                
-                distances_text = element.select_one(".event-distances").text.strip()
-                event["distances"] = distances_text.split(",")
-                
-                events.append(event)
-                
-            self.logger.info(f"Successfully scraped {len(events)} events from PNER")
-            return events
-            
-        except Exception as e:
-            self.logger.error(f"Error scraping PNER website: {e}")
-            return []
-            
-    def parse_date(self, date_str: Optional[str]) -> Optional[datetime]:
-        if not date_str:
-            return None
-            
-        try:
-            # Example format: "2023-09-15"
-            return datetime.strptime(date_str, "%Y-%m-%d")
-        except ValueError:
-            self.logger.warning(f"Could not parse date: {date_str}")
-            return None
-            
-    def parse_distances(self, distances_data: List[str]) -> List[str]:
-        result = []
-        for distance in distances_data:
-            # Clean and normalize
-            clean = distance.strip().lower()
-            
-            # Extract numbers
-            match = re.search(r'(\d+)', clean)
-            if match:
-                result.append(match.group(1))
-                
-        return result
-```
-
-## Scheduling and Automation
-
-The scrapers are run on a schedule using a combination of cron jobs and the application scheduler:
-
-### Schedule Configuration
-
-The default schedule is defined in the application settings and can be overridden with environment variables:
-
-```python
-# Default schedule settings
-SCRAPER_SETTINGS = {
-    "pner_website": {
-        "enabled": True,
-        "schedule": "0 0 * * 0"  # Weekly on Sunday at midnight
-    },
-    "aerc_calendar": {
-        "enabled": True,
-        "schedule": "0 0 * * 1"  # Weekly on Monday at midnight
-    },
-    "ride_managers": {
-        "enabled": True,
-        "schedule": "0 12 * * *"  # Daily at noon
-    },
-    "facebook_pages": {
-        "enabled": True,
-        "schedule": "0 8,20 * * *"  # Twice daily at 8am and 8pm
-    }
+SCRAPERS = {
+    "aerc_calendar": AERCScraper,
+    "new_source": NewScraper
 }
 ```
 
-### Running the Scrapers
+4. Add configuration:
+```python
+class NewScraperSettings(ScraperBaseSettings):
+    base_url: str
+    update_frequency: int
+    # etc.
+```
 
-#### Manual Execution
+5. Create tests:
+```
+tests/scrapers/new_scraper/
+├── conftest.py
+├── test_scraper.py
+└── fixtures/
+```
 
-Scrapers can be run manually using the CLI:
+## Running Scrapers
+
+### Manual Execution
 
 ```bash
 # Run all scrapers
 python -m scrapers.run_scrapers
 
-# Run a specific scraper
-python -m scrapers.run_scrapers --source pner_website
+# Run specific scraper
+python -m scrapers.run_scrapers aerc_calendar
+
+# Run with options
+python -m scrapers.run_scrapers aerc_calendar \
+    --refresh-cache \
+    --debug \
+    --validate
 ```
 
-#### Automated Execution
+### Scheduled Execution
 
-For production, the scrapers are run as scheduled tasks:
-
-1. **Docker setup:**
-   - Use a separate container for running scrapers
-   - Mount a volume for sharing data with the API container
-
-2. **Kubernetes setup:**
-   - Use CronJob resources to schedule scraper execution
-   - Set resource limits appropriate for scraping operations
-
-## Data Processing and Storage
-
-### Data Normalization
-
-All scraped data goes through a normalization process to ensure consistency:
-
-1. **Name standardization**: Consistent formatting of event names
-2. **Date parsing**: Convert various date formats to ISO 8601
-3. **Location processing**: Extract structured location data
-4. **Region classification**: Assign events to appropriate regions
-5. **Distance formatting**: Standardize distance representations
-
-### Storage Process
-
-Once normalized, data is stored in the database:
-
-1. **Check for duplicates**: Compare with existing events to avoid duplication
-2. **Update existing events**: If an event already exists, update with new information
-3. **Add new events**: Insert completely new events
-4. **Mark stale events**: Flag events that are no longer found in sources
+The ScraperScheduler handles automated runs:
 
 ```python
-async def store_events(events: List[dict], db_session):
-    """Store scraped events in the database."""
-    for event_data in events:
-        # Check for existing event
-        existing_event = await crud.events.get_event_by_external_id(
-            db_session, 
-            event_data.get("external_id")
-        )
-        
-        if existing_event:
-            # Update existing event with new data
-            event_update = EventUpdate(**event_data)
-            await crud.events.update_event(
-                db_session,
-                event_id=existing_event.id,
-                event_update=event_update
-            )
-            logger.info(f"Updated event: {event_data['name']}")
-        else:
-            # Create new event
-            event_create = EventCreate(**event_data)
-            await crud.events.create_event(db_session, event_create)
-            logger.info(f"Created new event: {event_data['name']}")
+scheduler = ScraperScheduler()
+
+# Daily at midnight
+scheduler.schedule_scraper(
+    scraper_func=run_aerc_scraper,
+    name="aerc_daily",
+    cron="0 0 * * *"
+)
+
+# Weekly on Monday
+scheduler.schedule_scraper(
+    scraper_func=run_pner_scraper,
+    name="pner_weekly",
+    cron="0 0 * * 1"
+)
 ```
 
-## Error Handling and Monitoring
+## Maintenance
 
-### Error Types
+### Daily Tasks
+- Monitor scraper logs
+- Check event counts
+- Verify data quality
 
-The scraping system handles various types of errors:
+### Weekly Tasks
+- Review error patterns
+- Check source websites
+- Update cached data
 
-1. **Network errors**: Failed connections to source websites
-2. **Parsing errors**: Issues extracting data from HTML/PDF
-3. **Validation errors**: Scraped data failing validation rules
-4. **Storage errors**: Database issues when storing data
+### Monthly Tasks
+- Analyze performance metrics
+- Review/adjust schedules
+- Update documentation
 
-### Logging and Alerts
+## Troubleshooting
 
-The system generates detailed logs for monitoring and debugging:
+### Common Issues
 
-```python
-# Setup logging
-logging.config.dictConfig({
-    'version': 1,
-    'formatters': {
-        'default': {
-            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        }
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'level': 'INFO',
-            'formatter': 'default',
-        },
-        'file': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/scraper.log',
-            'maxBytes': 10485760,  # 10MB
-            'backupCount': 10,
-            'formatter': 'default',
-        }
-    },
-    'root': {
-        'level': 'INFO',
-        'handlers': ['console', 'file'],
-    }
-})
-```
+1. **Scraper Failures**:
+   - Check source website accessibility
+   - Verify HTML structure hasn't changed
+   - Review error logs
+   - Clear cache and retry
 
-For critical errors, the system can send alerts via email or other notification channels.
+2. **API Issues**:
+   - Verify API key validity
+   - Check rate limits
+   - Review model configuration
 
-## Adding New Scrapers
+3. **Cache Issues**:
+   - Clear specific cache: `rm cache/aerc_*.json`
+   - Force refresh: `SCRAPER_REFRESH=true`
+   - Check cache validation logs
 
-To add a new data source:
-
-1. **Create a new scraper class** that inherits from BaseScraper
-2. **Implement the scrape() method** to extract data from the source
-3. **Override normalization methods** if source data requires special handling
-4. **Register the scraper** in the scraper manager
-5. **Configure the schedule** for the new scraper
-6. **Test thoroughly** with sample data from the new source
-
-### Example: Adding a New Scraper
-
-```python
-# 1. Create the scraper class
-class NewOrganizationScraper(BaseScraper):
-    def __init__(self, logger=None):
-        super().__init__("New Organization", logger)
-        self.base_url = "https://example.org/events"
-        
-    async def scrape(self) -> List[dict]:
-        # Implementation for scraping the new source
-        pass
-        
-    # Override other methods as needed
-
-# 2. Register the scraper in the manager
-SCRAPERS = {
-    "pner_website": PNERScraper,
-    "aerc_calendar": AERCScraper,
-    "ride_managers": RideManagersScraper,
-    "facebook_pages": FacebookPagesScraper,
-    "new_organization": NewOrganizationScraper  # Add the new scraper
-}
-
-# 3. Configure the schedule
-SCRAPER_SETTINGS.update({
-    "new_organization": {
-        "enabled": True,
-        "schedule": "0 1 * * *"  # Daily at 1am
-    }
-})
-```
-
-## Maintenance and Updates
-
-### Handling Website Changes
-
-When source websites change their structure:
-
-1. **Detect the change** through monitoring and logging
-2. **Update the scraper code** to match the new structure
-3. **Test with the new structure** to ensure data is extracted correctly
-4. **Deploy the updated scraper**
-
-### Performance Optimization
-
-For better performance and reliability:
-
-1. **Use asynchronous requests** to speed up scraping multiple sources
-2. **Implement polite scraping** with delays between requests
-3. **Set appropriate timeouts** to handle unresponsive sources
-4. **Use caching** to reduce load on source websites
-5. **Implement retries** for transient errors
-
-### Backup Data Sources
-
-To ensure continuity if primary sources are unavailable:
-
-1. **Identify alternative sources** for each data type
-2. **Implement fallback scrapers** that activate when primary scrapers fail
-3. **Maintain an archive** of previously scraped data
-4. **Create a manual data entry interface** for critical information
+4. **Database Issues**:
+   - Check connection
+   - Verify schema compatibility
+   - Review transaction logs

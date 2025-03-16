@@ -30,11 +30,14 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db/trailblaze
       - DOCKER_ENV=true
+      - LOG_LEVEL=INFO
+      - API_DEBUG=false
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./:/app
+      - ./logs:/app/logs
 
   scraper:
     build:
@@ -45,12 +48,22 @@ services:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db/trailblaze
       - DOCKER_ENV=true
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=${GEMINI_MODEL}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash-lite}
+      - SCRAPER_DEBUG=${SCRAPER_DEBUG:-false}
+      - SCRAPER_REFRESH=${SCRAPER_REFRESH:-false}
+      - SCRAPER_VALIDATE=${SCRAPER_VALIDATE:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CACHE_TTL=3600
+      - REQUESTS_PER_SECOND=1.0
+      - MAX_BURST_SIZE=5
+      - MAX_RETRIES=3
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./:/app
+      - ./logs:/app/logs
+      - ./cache:/app/cache
     command: python -m scrapers.run_scrapers aerc_calendar
 
   manage:
@@ -61,11 +74,13 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db/trailblaze
       - DOCKER_ENV=true
+      - LOG_LEVEL=INFO
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./:/app
+      - ./logs:/app/logs
     command: tail -f /dev/null  # Keep container running
 
   test:
@@ -73,14 +88,19 @@ services:
     command: pytest
     volumes:
       - .:/app
+      - ./logs:/app/logs
+      - ./cache:/app/cache
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@test-db:5432/test_trailblaze
       - PYTHONPATH=/app
       - AERC_GEMINI_API_KEY=test_key
       - AERC_DEBUG_MODE=true
       - AERC_REFRESH_CACHE=true
+      - AERC_VALIDATE=true
+      - LOG_LEVEL=DEBUG
     depends_on:
-      - test-db
+      test-db:
+        condition: service_healthy
 
   test-db:
     image: postgres:15
@@ -90,6 +110,11 @@ services:
       - POSTGRES_DB=test_trailblaze
     ports:
       - "5433:5432"  # Different port to avoid conflicts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
       
 volumes:
   postgres_data:

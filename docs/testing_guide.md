@@ -42,14 +42,15 @@ We aim for high test coverage while focusing on testing business-critical paths 
 ```
 tests/
 ├── conftest.py              # Shared fixtures and configuration
-├── unit/                    # Unit tests
-│   ├── crud/                # Tests for CRUD operations
-│   ├── models/              # Tests for database models
-│   └── services/            # Tests for business logic services
-├── api/                     # API integration tests
-│   └── v1/                  # Tests for API v1 endpoints
-├── scrapers/                # Tests for data scrapers
-└── performance/             # Performance tests
+├── pytest.ini              # Pytest configuration
+├── unit/                   # Unit tests
+├── api/                    # API integration tests
+│   └── v1/                # Tests for API v1 endpoints
+└── scrapers/              # Tests for data scrapers
+    └── aerc_scraper/      # AERC scraper specific tests
+        ├── conftest.py    # Scraper test fixtures
+        ├── fixtures/      # Test data files
+        ├── test_*.py     # Test modules
 ```
 
 ## Running Tests
@@ -57,162 +58,109 @@ tests/
 ### Running All Tests
 
 ```bash
+# Run all tests
 pytest
+
+# Run with coverage report
+pytest --cov=app --cov-report=term --cov-report=html
 ```
 
 ### Running Specific Test Categories
 
 ```bash
 # Run only unit tests
-pytest tests/unit/
+pytest -m unit
 
-# Run only API tests
-pytest tests/api/
+# Run only integration tests
+pytest -m integration
 
-# Run tests with specific marks
-pytest -m "not slow"
+# Run scraper tests with coverage
+./tests/run_scraper_tests.sh
+
+# Run scraper integration tests
+./tests/run_scraper_tests.sh --integration
 ```
 
-### Test Coverage Report
+### Test Markers
 
-```bash
-pytest --cov=app --cov-report=term --cov-report=html
-```
-
-After running this command, open `htmlcov/index.html` in your browser to view the detailed coverage report.
+Available pytest markers:
+- `asyncio`: Mark a test as an async test
+- `integration`: Mark a test as an integration test
+- `unit`: Mark a test as a unit test
 
 ## Writing Tests
 
 ### Unit Test Example
 
-Here's an example of a unit test for a CRUD function:
-
 ```python
-# tests/unit/crud/test_events.py
-import pytest
-from datetime import datetime
-from app.crud import events
-from app.schemas.event import EventCreate
-
+@pytest.mark.unit
 async def test_create_event(db_session):
-    # Arrange
     event_data = EventCreate(
         name="Test Event",
-        description="Test Description",
-        location="Test Location",
-        coordinates={"lat": 45.123, "lng": -122.456},
-        date_start=datetime(2023, 7, 15, 8, 0, 0),
-        date_end=datetime(2023, 7, 16, 18, 0, 0),
-        organizer="Test Organizer",
-        region="Northwest",
-        distances=["25", "50"]
+        date_start=datetime.now(),
+        location="Test Location"
     )
-    
-    # Act
     event = await events.create_event(db_session, event_data)
-    
-    # Assert
     assert event.name == "Test Event"
-    assert event.organizer == "Test Organizer"
-    assert len(event.distances) == 2
 ```
 
-### API Test Example
-
-Here's an example of an API test:
+### Integration Test Example
 
 ```python
-# tests/api/v1/test_events_api.py
-import pytest
-from httpx import AsyncClient
-from app.main import app
-
-async def test_get_events(async_client: AsyncClient, test_events):
-    # Act
-    response = await async_client.get("/v1/events")
-    
-    # Assert
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) > 0
-    assert "name" in data[0]
-    assert "location" in data[0]
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_full_scraper_workflow(scraper, mock_db, test_html):
+    with patch('scrapers.aerc_scraper.network.NetworkHandler.make_request') as mock_request:
+        mock_request.return_value = test_html
+        result = await scraper.run(mock_db)
+        assert result['status'] == 'success'
 ```
 
 ### Test Fixtures
 
-Common test fixtures are defined in `tests/conftest.py`:
+Common test fixtures are in `tests/conftest.py`. Specialized fixtures for scrapers are in `tests/scrapers/aerc_scraper/conftest.py`.
 
-```python
-# Example fixtures
-@pytest.fixture
-async def db_session():
-    # Set up a test database session
-    ...
-    yield session
-    # Teardown code here
-
-@pytest.fixture
-async def async_client():
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        yield client
-
-@pytest.fixture
-async def test_events(db_session):
-    # Create test events in the database
-    ...
-    return events
-```
+Key fixtures include:
+- `db_session`: Provides test database session
+- `async_client`: Configured test client
+- `mock_db`: Mock database for scraper tests
+- `test_html`: Sample HTML for scraper tests
+- `sample_events`: Sample event data
 
 ## Test Coverage
 
-Our goal is to maintain at least 80% test coverage for the codebase. Critical components like authentication, data validation, and business logic should aim for near 100% coverage.
+Our coverage requirements:
+- Minimum 80% overall coverage
+- 90%+ for critical components (auth, data validation, scrapers)
+- 100% for business logic and data models
 
-Coverage is checked as part of the CI process, and pull requests that decrease coverage significantly may be rejected.
+Coverage is checked during CI/CD and tracked in the `/coverage` directory.
 
 ## Mocking External Dependencies
 
-For tests, we mock external dependencies like the Gemini API and database:
+We use pytest's monkeypatch and unittest.mock for mocking:
 
 ```python
-# Example of mocking the Gemini API
-from unittest.mock import patch
-
-@patch("app.services.ai_service.gemini_client")
-async def test_ask_question(mock_gemini_client):
-    # Configure the mock
-    mock_gemini_client.generate_content.return_value.text = "Test answer"
-    
-    # Call the function
-    result = await ask_question("Test question", "context")
-    
-    # Assert
-    assert result == "Test answer"
-    mock_gemini_client.generate_content.assert_called_once()
+@pytest.fixture
+def scraper(settings, mock_session):
+    """Create scraper with mocked components."""
+    with patch('scrapers.aerc_scraper.main.NetworkHandler') as mock_network:
+        mock_network.return_value.fetch_calendar = AsyncMock()
+        yield scraper
 ```
 
 ## Continuous Integration
 
-Tests are automatically run on every pull request and push to the main branch using GitHub Actions. The workflow includes:
+Tests run automatically on:
+- Pull requests
+- Pushes to main branch
+- Daily scheduled runs
 
-1. Setting up the test environment
-2. Running tests
-3. Measuring coverage
-4. Reporting results
-
-If tests fail, the pull request cannot be merged until the issues are fixed.
+Failed tests block merging until fixed.
 
 ## Performance Testing
 
-We use locust for performance testing:
-
-1. **Install locust:**
-
-```bash
-pip install locust
-```
-
-2. **Create a locustfile.py:**
+Performance tests use locust:
 
 ```python
 from locust import HttpUser, task, between
@@ -223,45 +171,26 @@ class ApiUser(HttpUser):
     @task
     def get_events(self):
         self.client.get("/v1/events")
-        
-    @task
-    def ask_question(self):
-        self.client.post("/v1/assistant/ask", 
-                        json={"question": "When is the next ride?"})
 ```
 
-3. **Run performance tests:**
-
+Run with:
 ```bash
 locust -f performance/locustfile.py
 ```
 
-4. **View results:**
-
-Open http://localhost:8089 in your browser to see the locust UI.
-
 ## Troubleshooting Common Test Issues
 
 ### Database Connection Issues
-
-If tests fail due to database connection issues:
-
-1. Check that PostgreSQL is running
-2. Verify the test database URL in `conftest.py`
-3. Ensure migrations are up to date
+- Check PostgreSQL is running
+- Verify test database URL
+- Run migrations
 
 ### Async Test Failures
+- Use @pytest.mark.asyncio
+- Await async functions
+- Check fixture definitions
 
-For async test failures:
-
-1. Make sure you're using the `pytest.mark.asyncio` decorator
-2. Check that your fixtures are properly defined as async
-3. Verify that you're awaiting async functions
-
-### Slow Tests
-
-If tests are running too slowly:
-
-1. Mark slow tests with `@pytest.mark.slow`
-2. Run only fast tests during development: `pytest -m "not slow"`
-3. Consider using more focused fixtures that set up only what's needed
+### Cache-Related Issues
+- Clear test cache: `rm -rf tests/temp_cache/*`
+- Set SCRAPER_REFRESH=true
+- Check cache TTL settings
