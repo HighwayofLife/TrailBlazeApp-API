@@ -18,6 +18,7 @@ import hashlib
 import aiohttp
 from bs4 import BeautifulSoup
 import google.generativeai as genai
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Add project root to import paths
@@ -39,6 +40,81 @@ settings = get_settings()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", settings.gemini_api_key)
 genai.configure(api_key=GEMINI_API_KEY)
 
+# Pydantic models for structured output
+class RideManagerContact(BaseModel):
+    name: Optional[str] = Field(None, description="Name of the ride manager")
+    email: Optional[str] = Field(None, description="Email of the ride manager")
+    phone: Optional[str] = Field(None, description="Phone number of the ride manager")
+
+class ControlJudge(BaseModel):
+    role: str = Field(..., description="Role of the judge (e.g., Head Control Judge)")
+    name: str = Field(..., description="Name of the judge")
+
+class Distance(BaseModel):
+    distance: str = Field(..., description="Distance of the ride")
+    date: str = Field(..., description="Date of the ride (YYYY-MM-DD)")
+    startTime: Optional[str] = Field(None, description="Start time of the ride")
+
+class AERCEvent(BaseModel):
+    rideName: str = Field(..., description="Name of the ride")
+    date: str = Field(..., description="Primary date of the event (YYYY-MM-DD)")
+    region: str = Field(..., description="AERC region")
+    location: str = Field(..., description="Location of the event")
+    distances: List[Distance] = Field(default_factory=list, description="Available ride distances")
+    rideManager: Optional[str] = Field(None, description="Name of the ride manager")
+    rideManagerContact: Optional[RideManagerContact] = Field(None, description="Contact details for the ride manager")
+    controlJudges: List[ControlJudge] = Field(default_factory=list, description="Control judges for the event")
+    mapLink: Optional[str] = Field(None, description="Google Maps link to the event location")
+    hasIntroRide: Optional[bool] = Field(False, description="Whether the event has an intro ride")
+    tag: Optional[int] = Field(None, description="External ID for the event")
+
+# Define Gemini schema as a dictionary
+GEMINI_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "rideName": {"type": "string"},
+            "date": {"type": "string", "format": "date"},
+            "region": {"type": "string"},
+            "location": {"type": "string"},
+            "distances": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "distance": {"type": "string"},
+                        "date": {"type": "string", "format": "date"},
+                        "startTime": {"type": "string"}
+                    },
+                    "required": ["distance", "date"]
+                }
+            },
+            "rideManager": {"type": "string"},
+            "rideManagerContact": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "email": {"type": "string", "format": "email"},
+                    "phone": {"type": "string"}
+                }
+            },
+            "controlJudges": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "role": {"type": "string"},
+                        "name": {"type": "string"}
+                    },
+                    "required": ["role", "name"]
+                }
+            }
+        },
+        "required": ["rideName", "date", "region", "location"]
+    }
+}
+
 class AERCScraper:
     """Scraper for the AERC calendar website."""
     
@@ -48,6 +124,7 @@ class AERCScraper:
     MAX_RETRIES = 3
     RETRY_DELAY = 5  # seconds
     REQUEST_TIMEOUT = 30  # seconds
+    MAX_CHUNK_SIZE = 30000  # characters for Gemini input
     
     def __init__(self):
         """Initialize the AERC scraper."""
@@ -266,82 +343,116 @@ class AERCScraper:
             return cached_data
         
         self.metrics.gemini_calls += 1
-        # Prepare the prompt for Gemini with clearer instructions
-        prompt = f"""
-        Extract endurance ride events from this AERC calendar HTML.
-        Return ONLY a valid JSON array of event objects.
-        Each event MUST have these fields:
-        - rideName (string)
-        - date (YYYY-MM-DD)
-        - region (string)
-        - location (string)
-        - distances (array of objects with distance, date, startTime)
-        - rideManager (string)
-        - rideManagerContact (object with name, email, phone)
-        - controlJudges (array of objects with role, name)
-
-        Do not include any explanatory text, just the JSON array.
-        If parsing fails, return an empty array [].
-
-        Calendar HTML:
-        {html[:50000]}  # Reduced size to help avoid token overflow
-        """
+        chunks = self._chunk_html(html)
+        all_events = []
         
-        try:
-            # First attempt with gemini-2.0-flash-lite
-            response = await asyncio.to_thread(
-                lambda: self.model.generate_content(prompt).text
-            )
+        for chunk_idx, chunk in enumerate(chunks):
+            logger.info(f"Processing chunk {chunk_idx + 1} of {len(chunks)}")
             
-            # Try to parse the JSON
-            data = self.parse_gemini_output(response)
-            if data:
-                self._save_cache(cache_key, data)
-                return data
-            
-            # If failed, retry with gemini-2.0-flash and a more restrictive prompt
-            logger.info("Retrying with gemini-2.0-flash model")
-            self.metrics.gemini_calls += 1
-            backup_model = genai.GenerativeModel('gemini-2.0-flash', generation_config={
-                "temperature": 0.1,  # Reduced temperature for more consistent output
-                "candidate_count": 1,
-                "max_output_tokens": 8192,
-                "stop_sequences": ["]"]  # Stop after closing the JSON array
-            })
-            
-            # More restrictive prompt for retry
-            retry_prompt = f"""
-            Parse this calendar HTML and output ONLY a JSON array.
-            Format: [{{event1}}, {{event2}}, ...]
-            Required fields per event: rideName, date, region, location
-            No explanations or extra text.
-            If unsure, skip the event.
+            prompt = f"""
+            Extract endurance ride events from this AERC calendar HTML.
+            Return ONLY a JSON array of events with the following fields:
+            - rideName (required): string, name of the ride
+            - date (required): string, YYYY-MM-DD format
+            - region (required): string, AERC region
+            - location (required): string, location of the event
+            - distances: array of objects with distance (string) and date (YYYY-MM-DD)
+            - rideManager: string, name of the ride manager
+            - rideManagerContact: object with name, email, and phone fields
+            - controlJudges: array of objects with role and name fields
+            - mapLink: string, Google Maps link
+            - hasIntroRide: boolean
 
-            HTML:
-            {html[:30000]}
+            Calendar HTML:
+            {chunk}
             """
             
-            response = await asyncio.to_thread(
-                lambda: backup_model.generate_content(retry_prompt).text
-            )
-            
-            data = self.parse_gemini_output(response)
-            if data:
-                self._save_cache(cache_key, data)
-                return data
-            
-            # If still failed, use fallback regex parsing
-            logger.warning("Gemini extraction failed, falling back to regex parsing")
-            self.metrics.gemini_errors += 2  # Count both attempts
-            self.metrics.fallback_used = True
-            return self.fallback_extraction(html)
-            
-        except Exception as e:
-            logger.exception(f"Error extracting structured data: {e}")
-            self.metrics.gemini_errors += 1
-            self.metrics.fallback_used = True
-            return self.fallback_extraction(html)
+            try:
+                # First attempt with primary model
+                response = await asyncio.to_thread(
+                    lambda: self.model.generate_content(
+                        prompt,
+                        generation_config={
+                            "temperature": 0.1,
+                            "candidate_count": 1,
+                            "max_output_tokens": 8192,
+                        }
+                    )
+                )
+                
+                try:
+                    # Clean the response text to ensure it's valid JSON
+                    text = response.text.strip()
+                    text = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', text, flags=re.DOTALL)  # Remove code blocks
+                    text = text.replace('\n', ' ').strip()  # Remove newlines
+                    start_idx = text.find('[')
+                    end_idx = text.rfind(']')
+                    if start_idx != -1 and end_idx != -1:
+                        json_str = text[start_idx:end_idx + 1]
+                        # Clean up common JSON issues
+                        json_str = re.sub(r',\s*]', ']', json_str)
+                        json_str = re.sub(r',\s*}', '}', json_str)
+                        events_json = json.loads(json_str)
+                        chunk_events = [AERCEvent.model_validate(event).model_dump() for event in events_json]
+                        all_events.extend(chunk_events)
+                        logger.info(f"Successfully extracted {len(chunk_events)} events from chunk {chunk_idx + 1}")
+                        continue
+                    else:
+                        logger.warning(f"No JSON array found in response for chunk {chunk_idx + 1}")
+                except Exception as e:
+                    logger.warning(f"Failed to validate events from model: {e}")
+                
+                # If extraction fails, use fallback
+                logger.warning(f"Gemini extraction failed for chunk {chunk_idx + 1}, using fallback")
+                self.metrics.gemini_errors += 1
+                fallback_events = self.fallback_extraction(chunk)
+                all_events.extend(fallback_events)
+                
+            except Exception as e:
+                logger.exception(f"Error in chunk {chunk_idx + 1}: {e}")
+                self.metrics.gemini_errors += 1
+                fallback_events = self.fallback_extraction(chunk)
+                all_events.extend(fallback_events)
+        
+        if all_events:
+            self._save_cache(cache_key, all_events)
+            logger.info(f"Total events extracted: {len(all_events)}")
+            return all_events
+        else:
+            logger.error("No events extracted from any method")
+            return []
 
+    def _chunk_html(self, html: str) -> List[str]:
+        """Split HTML into manageable chunks for Gemini processing."""
+        soup = BeautifulSoup(html, 'html.parser')
+        rows = soup.find_all('div', class_='calendarRow')
+        
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for row in rows:
+            row_html = str(row)
+            row_size = len(row_html)
+            
+            if current_size + row_size > self.MAX_CHUNK_SIZE:
+                # Create a new chunk with proper HTML structure
+                chunk_html = f'<div class="calendar-content">{"".join(current_chunk)}</div>'
+                chunks.append(chunk_html)
+                current_chunk = [row_html]
+                current_size = row_size
+            else:
+                current_chunk.append(row_html)
+                current_size += row_size
+        
+        # Add the final chunk
+        if current_chunk:
+            chunk_html = f'<div class="calendar-content">{"".join(current_chunk)}</div>'
+            chunks.append(chunk_html)
+        
+        logger.info(f"Split HTML into {len(chunks)} chunks")
+        return chunks
+    
     def parse_gemini_output(self, text: str) -> List[Dict[str, Any]]:
         """Parse Gemini output to extract JSON data."""
         try:
