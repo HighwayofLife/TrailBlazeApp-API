@@ -67,6 +67,29 @@ services:
     volumes:
       - ./:/app
     command: tail -f /dev/null  # Keep container running
+
+  test:
+    build: .
+    command: pytest
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@test-db:5432/test_trailblaze
+      - PYTHONPATH=/app
+      - AERC_GEMINI_API_KEY=test_key
+      - AERC_DEBUG_MODE=true
+      - AERC_REFRESH_CACHE=true
+    depends_on:
+      - test-db
+
+  test-db:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=test_trailblaze
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
       
 volumes:
   postgres_data:

@@ -15,6 +15,7 @@ This document provides guidelines and procedures for maintaining the TrailBlazeA
 - [Performance Optimization](#performance-optimization)
 - [Security Maintenance](#security-maintenance)
 - [API Versioning and Deprecation](#api-versioning-and-deprecation)
+- [Cache Management](#cache-management)
 
 ## Routine Maintenance Tasks
 
@@ -469,3 +470,93 @@ async def old_endpoint():
    - Announce deprecation in documentation
    - Set concrete removal date
    - Provide migration path
+
+## Cache Management
+
+### Cache Strategy
+
+The application uses a caching system to improve performance and reduce load on external services. This includes:
+
+1. **HTML Source Caching**: Raw HTML responses from scraped websites
+2. **Structured Data Caching**: Processed JSON data extracted from HTML
+3. **API Response Caching**: Responses from external APIs (like Gemini)
+
+### Cache Configuration
+
+Cache behavior can be controlled through environment variables:
+
+```bash
+# Force cache refresh
+SCRAPER_REFRESH=true
+
+# Enable cache debugging
+SCRAPER_DEBUG=true
+
+# Enable validation checks
+SCRAPER_VALIDATE=true
+```
+
+### Cache TTL Recommendations
+
+Different types of data should have different Time-To-Live (TTL) settings:
+
+1. **HTML Source Data**: 24 hours (refresh daily)
+2. **Structured JSON Data**: 12 hours
+3. **Database Comparison Results**: 6 hours
+4. **External API Responses**: 7 days (for stable reference data)
+
+### Managing Cache Manually
+
+To clear the cache before running scrapers:
+
+```bash
+# Clear all cache
+rm -rf cache/*
+
+# Clear specific cache entries
+rm -rf cache/aerc_calendar_*.json
+```
+
+### Cache Validation
+
+The system should validate cached data by:
+
+1. **Timestamp Validation**: Check if cached data is within TTL
+2. **Count Validation**: Compare HTML row count to JSON event count
+3. **Consistency Checks**: Ensure data format matches expected schema
+
+### When to Force Cache Invalidation
+
+Cache should be forcibly invalidated under these conditions:
+
+1. **Schedule Changes**: When source websites update their schedules
+2. **Manual Triggers**: During debugging or data verification
+3. **Validation Failures**: When inconsistencies are detected
+4. **Data Format Changes**: When source websites change their HTML structure
+
+### Running Scrapers with Cache Control
+
+```bash
+# Run with default cache behavior
+docker-compose exec manage python -m scrapers.run_scrapers aerc_calendar
+
+# Run with cache refresh
+docker-compose exec -e SCRAPER_REFRESH=true manage python -m scrapers.run_scrapers aerc_calendar
+
+# Run with validation
+docker-compose exec -e SCRAPER_VALIDATE=true manage python -m scrapers.run_scrapers aerc_calendar
+
+# Run with debug logging and cache metrics
+docker-compose exec -e SCRAPER_DEBUG=true manage python -m scrapers.run_scrapers aerc_calendar
+```
+
+### Verifying Cache Efficiency
+
+Cache performance should be monitored to ensure optimal configuration:
+
+1. **Cache Hit Rate**: Percentage of requests served from cache
+2. **Cache Size**: Total storage used by cached data
+3. **Cache Freshness**: Age distribution of cached entries
+4. **Cache Validation Success Rate**: Percentage of cache entries passing validation
+
+Regular monitoring of these metrics helps identify when cache parameters need adjustment.

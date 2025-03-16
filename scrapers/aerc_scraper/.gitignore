@@ -1,0 +1,35 @@
+# Test artifacts
+tests/temp_cache/
+tests/metrics/
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+__pycache__/
+
+# Cache directories
+cache/
+debug/
+logs/
+
+# Environment
+.env
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# System
+.DS_Store
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.egg-info/
+.eggs/

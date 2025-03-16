@@ -19,10 +19,13 @@ aiohttp>=3.9.3
 beautifulsoup4>=4.12.3
 scrapy>=2.10.0
 Brotli>=1.1.0
+lxml>=5.1.0
+html5lib>=1.1
 
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.1
+pytest-cov>=4.1.0
 httpx==0.28.1
 
 # Logging
@@ -34,6 +37,12 @@ email-validator>=2.0.0
 aiofiles==24.1.0
 tenacity>=8.2.3
 
-# Add to existing requirements
-google-generativeai>=0.3.2
+# AI and Data Processing
+google-genai>=0.1.0
+google-cloud-storage>=2.14.0
+jsonschema>=4.21.1
+cachetools>=5.3.2
+
+# Monitoring
 psutil>=5.9.8
+prometheus_client>=0.19.0
