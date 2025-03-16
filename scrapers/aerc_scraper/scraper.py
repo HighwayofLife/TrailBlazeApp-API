@@ -1,24 +1,22 @@
 #!/usr/bin/env python
 """
-AERC Calendar Scraper
-
-This module extracts event data from the AERC calendar and processes it using
-the Gemini API for structured data extraction.
+AERC Calendar Scraper with enhanced error logging and debugging capabilities
 """
 
 import os
 import json
 import logging
 import asyncio
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 import re
 import hashlib
+import traceback
 
 import aiohttp
 from bs4 import BeautifulSoup
 import google.generativeai as genai
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Add project root to import paths
@@ -124,14 +122,36 @@ class AERCScraper:
     MAX_RETRIES = 3
     RETRY_DELAY = 5  # seconds
     REQUEST_TIMEOUT = 30  # seconds
-    MAX_CHUNK_SIZE = 30000  # characters for Gemini input
+    INITIAL_CHUNK_SIZE = 30000  # Initial characters for Gemini input
+    MIN_CHUNK_SIZE = 15000     # Minimum chunk size to try
+    MAX_CHUNK_SIZE = 45000     # Maximum chunk size to try
+    CHUNK_ADJUST_FACTOR = 0.75  # Factor to reduce chunk size on failure
     
     def __init__(self):
-        """Initialize the AERC scraper."""
-        self.model = genai.GenerativeModel(
+        """Initialize the AERC scraper with enhanced debugging."""
+        self.debug_mode = os.getenv('SCRAPER_DEBUG', 'false').lower() == 'true'
+        
+        # Configure Gemini models with detailed logging
+        self.primary_model = genai.GenerativeModel(
             'gemini-2.0-flash-lite',
-            generation_config={"temperature": 0.3}
+            generation_config={
+                "temperature": 0.1,
+                "candidate_count": 1,
+                "max_output_tokens": 8192,
+                "stop_sequences": ["]"]  # Ensure we get complete JSON arrays
+            }
         )
+        
+        self.fallback_model = genai.GenerativeModel(
+            'gemini-2.0-flash',
+            generation_config={
+                "temperature": 0.3,
+                "candidate_count": 1,
+                "max_output_tokens": 8192,
+                "stop_sequences": ["]"]
+            }
+        )
+        
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -153,7 +173,81 @@ class AERCScraper:
         self.metrics.events_skipped = 0
         self.metrics.events_duplicate = 0
         self.metrics.validation_errors = 0
-    
+        self.metrics.primary_model_failures = 0
+        self.metrics.fallback_model_successes = 0
+        
+        # Add chunk size tracking
+        self.current_chunk_size = self.INITIAL_CHUNK_SIZE
+        self.chunk_success_count = 0
+        self.chunk_failure_count = 0
+
+        # Initialize debugging directory
+        self.debug_dir = os.path.join(self.CACHE_DIR, 'debug')
+        if self.debug_mode:
+            os.makedirs(self.debug_dir, exist_ok=True)
+        
+        # Initialize error tracking
+        self.chunk_errors = {}
+
+    def _adjust_chunk_size(self, success: bool, processing_time: float = None) -> None:
+        """
+        Adjust chunk size based on success/failure patterns and processing time.
+        
+        Args:
+            success: Whether the chunk processing was successful
+            processing_time: Time taken to process the chunk in seconds
+        """
+        if success:
+            self.chunk_success_count += 1
+            self.chunk_failure_count = 0
+            
+            # After 3 consecutive successes, consider increasing chunk size
+            if self.chunk_success_count >= 3:
+                if processing_time and processing_time < 5.0:  # If processing is fast
+                    new_size = min(
+                        int(self.current_chunk_size * 1.5),  # More aggressive increase
+                        self.MAX_CHUNK_SIZE
+                    )
+                else:
+                    new_size = min(
+                        int(self.current_chunk_size * 1.25),  # Conservative increase
+                        self.MAX_CHUNK_SIZE
+                    )
+                
+                if new_size != self.current_chunk_size:
+                    logger.info(f"Increasing chunk size from {self.current_chunk_size} to {new_size}")
+                    self.current_chunk_size = new_size
+                self.chunk_success_count = 0
+        else:
+            self.chunk_failure_count += 1
+            self.chunk_success_count = 0
+            
+            # Adjust reduction factor based on consecutive failures
+            reduction_factor = max(0.5, 0.75 - (self.chunk_failure_count * 0.1))
+            
+            new_size = max(
+                int(self.current_chunk_size * reduction_factor),
+                self.MIN_CHUNK_SIZE
+            )
+            
+            if new_size != self.current_chunk_size:
+                logger.info(
+                    f"Reducing chunk size from {self.current_chunk_size} to {new_size} "
+                    f"(failure #{self.chunk_failure_count})"
+                )
+                self.current_chunk_size = new_size
+                
+        # Log chunk size metrics
+        if self.debug_mode:
+            self._save_debug_info('chunk_size_adjustment', {
+                'timestamp': datetime.now().isoformat(),
+                'success': success,
+                'processing_time': processing_time,
+                'new_chunk_size': self.current_chunk_size,
+                'consecutive_successes': self.chunk_success_count,
+                'consecutive_failures': self.chunk_failure_count
+            })
+
     def _get_cache_path(self, key: str) -> str:
         """Generate a cache file path for a given key."""
         hash_key = hashlib.md5(key.encode()).hexdigest()
@@ -172,6 +266,40 @@ class AERCScraper:
         cache_path = self._get_cache_path(key)
         with open(cache_path, 'w') as cache_file:
             json.dump(data, cache_file)
+
+    def _save_debug_info(self, chunk_idx: int, stage: str, data: Any, error: Optional[Exception] = None) -> None:
+        """Save debugging information for failed chunks."""
+        if not self.debug_mode:
+            return
+            
+        debug_file = os.path.join(
+            self.debug_dir, 
+            f'chunk_{chunk_idx}_{stage}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+        )
+        
+        debug_info = {
+            'timestamp': datetime.now().isoformat(),
+            'chunk_index': chunk_idx,
+            'stage': stage,
+            'chunk_size': len(str(data)) if isinstance(data, (str, dict, list)) else 0
+        }
+        
+        if error:
+            debug_info.update({
+                'error_type': type(error).__name__,
+                'error_message': str(error),
+                'traceback': traceback.format_exc()
+            })
+            
+        if isinstance(data, (str, dict, list)):
+            debug_info['data'] = data
+            
+        try:
+            with open(debug_file, 'w') as f:
+                json.dump(debug_info, f, indent=2)
+            logger.debug(f"Saved debug info to {debug_file}")
+        except Exception as e:
+            logger.error(f"Failed to save debug info: {e}")
     
     async def _make_request(self, url: str, method: str = "GET", data: Dict = None, retry_count: int = 0) -> Optional[str]:
         """Make an HTTP request with retry logic."""
@@ -331,11 +459,14 @@ class AERCScraper:
             return ""
 
     async def extract_structured_data(self, html: str) -> List[Dict[str, Any]]:
-        """Extract structured data from HTML using Gemini."""
+        """Extract structured data from HTML with enhanced error logging."""
         if not html:
             logger.error("No HTML provided for extraction")
             return []
-
+        
+        # Take initial memory sample
+        self.metrics.sample_memory()
+        
         cache_key = f"structured_data_{hashlib.md5(html.encode()).hexdigest()}"
         cached_data = self._load_cache(cache_key)
         if cached_data:
@@ -345,74 +476,99 @@ class AERCScraper:
         self.metrics.gemini_calls += 1
         chunks = self._chunk_html(html)
         all_events = []
+        chunk_errors = []
         
         for chunk_idx, chunk in enumerate(chunks):
-            logger.info(f"Processing chunk {chunk_idx + 1} of {len(chunks)}")
+            # Take memory sample before processing each chunk
+            mem_sample = self.metrics.sample_memory()
+            logger.debug(
+                f"Memory before chunk {chunk_idx + 1}: "
+                f"RSS={mem_sample['rss']:.1f}MB, "
+                f"VMS={mem_sample['vms']:.1f}MB"
+            )
             
-            prompt = f"""
-            Extract endurance ride events from this AERC calendar HTML.
-            Return ONLY a JSON array of events with the following fields:
-            - rideName (required): string, name of the ride
-            - date (required): string, YYYY-MM-DD format
-            - region (required): string, AERC region
-            - location (required): string, location of the event
-            - distances: array of objects with distance (string) and date (YYYY-MM-DD)
-            - rideManager: string, name of the ride manager
-            - rideManagerContact: object with name, email, and phone fields
-            - controlJudges: array of objects with role and name fields
-            - mapLink: string, Google Maps link
-            - hasIntroRide: boolean
-
-            Calendar HTML:
-            {chunk}
-            """
+            logger.info(f"Processing chunk {chunk_idx + 1} of {len(chunks)} (size: {len(chunk)})")
             
-            try:
-                # First attempt with primary model
-                response = await asyncio.to_thread(
-                    lambda: self.model.generate_content(
-                        prompt,
-                        generation_config={
-                            "temperature": 0.1,
-                            "candidate_count": 1,
-                            "max_output_tokens": 8192,
-                        }
-                    )
-                )
-                
+            if self.debug_mode:
+                self._save_debug_info(chunk_idx, 'input_chunk', chunk)
+            
+            success = False
+            retry_count = 0
+            current_chunk = chunk
+            
+            while not success and retry_count < self.MAX_RETRIES:
                 try:
-                    # Clean the response text to ensure it's valid JSON
-                    text = response.text.strip()
-                    text = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', text, flags=re.DOTALL)  # Remove code blocks
-                    text = text.replace('\n', ' ').strip()  # Remove newlines
-                    start_idx = text.find('[')
-                    end_idx = text.rfind(']')
-                    if start_idx != -1 and end_idx != -1:
-                        json_str = text[start_idx:end_idx + 1]
-                        # Clean up common JSON issues
-                        json_str = re.sub(r',\s*]', ']', json_str)
-                        json_str = re.sub(r',\s*}', '}', json_str)
-                        events_json = json.loads(json_str)
-                        chunk_events = [AERCEvent.model_validate(event).model_dump() for event in events_json]
-                        all_events.extend(chunk_events)
-                        logger.info(f"Successfully extracted {len(chunk_events)} events from chunk {chunk_idx + 1}")
-                        continue
+                    # Try primary model
+                    prompt = self._create_prompt(current_chunk)
+                    if self.debug_mode:
+                        self._save_debug_info(chunk_idx, f'prompt_attempt_{retry_count}', prompt)
+                    
+                    response = await asyncio.to_thread(
+                        lambda: self.primary_model.generate_content(prompt)
+                    )
+                    
+                    events = await self._process_gemini_response(response, chunk_idx)
+                    if events:
+                        all_events.extend(events)
+                        success = True
+                        break
+                    
+                    # Try fallback model
+                    logger.info(f"Primary model failed for chunk {chunk_idx + 1}, trying fallback")
+                    response = await asyncio.to_thread(
+                        lambda: self.fallback_model.generate_content(prompt)
+                    )
+                    
+                    events = await self._process_gemini_response(response, chunk_idx)
+                    if events:
+                        all_events.extend(events)
+                        self.metrics.fallback_model_successes += 1
+                        success = True
+                        break
+                    
+                    # Handle failure
+                    if retry_count < self.MAX_RETRIES - 1:
+                        current_chunk = self._split_chunk(current_chunk)
+                        logger.info(f"Retrying chunk {chunk_idx + 1} with size {len(current_chunk)}")
+                        retry_count += 1
                     else:
-                        logger.warning(f"No JSON array found in response for chunk {chunk_idx + 1}")
+                        error_info = {
+                            'chunk_idx': chunk_idx,
+                            'attempts': retry_count + 1,
+                            'final_chunk_size': len(current_chunk)
+                        }
+                        chunk_errors.append(error_info)
+                        logger.error(f"Failed to process chunk {chunk_idx + 1} after {retry_count + 1} attempts")
+                        
                 except Exception as e:
-                    logger.warning(f"Failed to validate events from model: {e}")
-                
-                # If extraction fails, use fallback
-                logger.warning(f"Gemini extraction failed for chunk {chunk_idx + 1}, using fallback")
-                self.metrics.gemini_errors += 1
-                fallback_events = self.fallback_extraction(chunk)
-                all_events.extend(fallback_events)
-                
-            except Exception as e:
-                logger.exception(f"Error in chunk {chunk_idx + 1}: {e}")
-                self.metrics.gemini_errors += 1
-                fallback_events = self.fallback_extraction(chunk)
-                all_events.extend(fallback_events)
+                    logger.exception(f"Error processing chunk {chunk_idx + 1}")
+                    if retry_count < self.MAX_RETRIES - 1:
+                        current_chunk = self._split_chunk(current_chunk)
+                        retry_count += 1
+                    else:
+                        chunk_errors.append({
+                            'chunk_idx': chunk_idx,
+                            'error': str(e),
+                            'traceback': traceback.format_exc()
+                        })
+                        break
+            
+            # Take memory sample after processing chunk
+            mem_sample = self.metrics.sample_memory()
+            logger.debug(
+                f"Memory after chunk {chunk_idx + 1}: "
+                f"RSS={mem_sample['rss']:.1f}MB, "
+                f"VMS={mem_sample['vms']:.1f}MB"
+            )
+        
+        # Take final memory sample
+        self.metrics.sample_memory()
+        
+        # Save error summary if in debug mode
+        if self.debug_mode and chunk_errors:
+            error_file = os.path.join(self.debug_dir, f'chunk_errors_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
+            with open(error_file, 'w') as f:
+                json.dump(chunk_errors, f, indent=2)
         
         if all_events:
             self._save_cache(cache_key, all_events)
@@ -420,6 +576,86 @@ class AERCScraper:
             return all_events
         else:
             logger.error("No events extracted from any method")
+            return []
+
+    async def _process_gemini_response(self, response, chunk_idx: int) -> List[Dict[str, Any]]:
+        """Process Gemini API response with enhanced error logging."""
+        # Take memory sample before processing
+        mem_before = self.metrics.sample_memory()
+        
+        try:
+            # Log raw response for debugging
+            if self.debug_mode:
+                self._save_debug_info(chunk_idx, 'raw_response', response.text)
+            
+            # Clean and process the response
+            text = response.text.strip()
+            
+            # Take memory sample after text processing
+            mem_after = self.metrics.sample_memory()
+            logger.debug(
+                f"Memory usage during response processing: "
+                f"Before={mem_before['rss']:.1f}MB, "
+                f"After={mem_after['rss']:.1f}MB"
+            )
+            
+            # Remove any markdown code block syntax
+            text = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', text, flags=re.DOTALL)
+            
+            # Find the JSON array
+            start_idx = text.find('[')
+            end_idx = text.rfind(']')
+            
+            if start_idx == -1 or end_idx == -1:
+                logger.warning(f"No JSON array found in response for chunk {chunk_idx}")
+                self._save_debug_info(chunk_idx, 'no_json_array', text)
+                return []
+            
+            # Extract and clean JSON string
+            json_str = text[start_idx:end_idx + 1]
+            json_str = re.sub(r',\s*]', ']', json_str)  # Fix trailing commas
+            json_str = re.sub(r',\s*}', '}', json_str)  # Fix trailing commas in objects
+            
+            if self.debug_mode:
+                self._save_debug_info(chunk_idx, 'cleaned_json', json_str)
+            
+            try:
+                events_json = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error in chunk {chunk_idx}: {e}")
+                self._save_debug_info(chunk_idx, 'json_decode_error', {
+                    'error_position': e.pos,
+                    'error_message': e.msg,
+                    'json_context': json_str[max(0, e.pos-100):min(len(json_str), e.pos+100)]
+                }, error=e)
+                return []
+            
+            # Validate and clean events
+            valid_events = []
+            for idx, event in enumerate(events_json):
+                try:
+                    validated_event = AERCEvent.model_validate(event)
+                    valid_events.append(validated_event.model_dump())
+                except ValidationError as e:
+                    logger.warning(f"Validation error in event {idx} of chunk {chunk_idx}")
+                    self._save_debug_info(
+                        chunk_idx,
+                        f'validation_error_event_{idx}',
+                        {'event': event, 'validation_errors': e.errors()},
+                        error=e
+                    )
+                    continue
+            
+            if valid_events:
+                logger.info(f"Successfully extracted {len(valid_events)} events from chunk {chunk_idx}")
+                return valid_events
+            else:
+                logger.warning(f"No valid events found in chunk {chunk_idx}")
+                return []
+            
+        except Exception as e:
+            logger.error(f"Unexpected error processing chunk {chunk_idx}: {e}")
+            self._save_debug_info(chunk_idx, 'unexpected_error', response.text, error=e)
             return []
 
     def _chunk_html(self, html: str) -> List[str]:
@@ -435,7 +671,7 @@ class AERCScraper:
             row_html = str(row)
             row_size = len(row_html)
             
-            if current_size + row_size > self.MAX_CHUNK_SIZE:
+            if current_size + row_size > self.current_chunk_size:
                 # Create a new chunk with proper HTML structure
                 chunk_html = f'<div class="calendar-content">{"".join(current_chunk)}</div>'
                 chunks.append(chunk_html)
@@ -450,9 +686,45 @@ class AERCScraper:
             chunk_html = f'<div class="calendar-content">{"".join(current_chunk)}</div>'
             chunks.append(chunk_html)
         
-        logger.info(f"Split HTML into {len(chunks)} chunks")
+        logger.info(f"Split HTML into {len(chunks)} chunks (current chunk size: {self.current_chunk_size})")
         return chunks
-    
+
+    def _create_prompt(self, chunk: str) -> str:
+        """Create a prompt for Gemini models."""
+        return f"""
+        Extract endurance ride events from this AERC calendar HTML.
+        Return ONLY a JSON array of events with the following fields:
+        - rideName (required): string, name of the ride
+        - date (required): string, YYYY-MM-DD format
+        - region (required): string, AERC region
+        - location (required): string, location of the event
+        - distances: array of objects with distance (string) and date (YYYY-MM-DD)
+        - rideManager: string, name of the ride manager
+        - rideManagerContact: object with name, email, and phone fields
+        - controlJudges: array of objects with role and name fields
+        - mapLink: string, Google Maps link
+        - hasIntroRide: boolean
+
+        Calendar HTML:
+        {chunk}
+        """
+
+    def _split_chunk(self, chunk: str) -> str:
+        """Split a chunk into a smaller piece for retry."""
+        soup = BeautifulSoup(chunk, 'html.parser')
+        rows = soup.find_all('div', class_='calendarRow')
+        
+        if len(rows) <= 1:
+            return chunk  # Can't split further
+            
+        # Take first half of the rows
+        half = len(rows) // 2
+        new_chunk = []
+        for i in range(half):
+            new_chunk.append(str(rows[i]))
+        
+        return f'<div class="calendar-content">{"".join(new_chunk)}</div>'
+
     def parse_gemini_output(self, text: str) -> List[Dict[str, Any]]:
         """Parse Gemini output to extract JSON data."""
         try:
@@ -490,12 +762,21 @@ class AERCScraper:
         """Validate extracted events data and fill in defaults for required fields."""
         self.metrics.events_found = len(events)
         valid_events = []
+        seen_events = set()  # Track unique event identifiers
         
         for event in events:
             try:
+                # Generate a stable event identifier for deduplication
+                event_key = f"{event.get('rideName', '')}-{event.get('date', '')}-{event.get('location', '')}"
+                if event_key in seen_events:
+                    self.metrics.events_duplicate += 1
+                    logger.debug(f"Skipping duplicate event: {event_key}")
+                    continue
+                seen_events.add(event_key)
+                
                 # Fill in defaults for required fields if missing
-                event['rideName'] = event.get('rideName', 'Untitled AERC Event')
-                event['region'] = event.get('region', 'Unknown Region')
+                event['rideName'] = event.get('rideName', 'Untitled AERC Event').strip()
+                event['region'] = event.get('region', 'Unknown Region').strip()
                 event['date'] = event.get('date')
                 
                 if not event['date']:
@@ -503,26 +784,67 @@ class AERCScraper:
                     logger.warning(f"Skipping event with no date: {event['rideName']}")
                     continue
                 
-                # Ensure distances is a list
+                # Clean and validate location
+                event['location'] = event.get('location', 'Location TBA').strip()
+                if event['location'].lower() in ['tba', 'to be announced']:
+                    event['location'] = 'Location TBA'
+                
+                # Ensure distances is a list and clean distance data
                 if not event.get('distances'):
                     event['distances'] = [{"distance": "Unknown", "date": event['date']}]
-                    logger.warning(f"Added default distance for event: {event['rideName']}")
+                else:
+                    cleaned_distances = []
+                    for distance in event['distances']:
+                        if isinstance(distance, dict):
+                            # Clean distance string and ensure required fields
+                            dist_str = str(distance.get('distance', '')).strip()
+                            if dist_str and distance.get('date'):
+                                cleaned_distances.append({
+                                    "distance": dist_str,
+                                    "date": distance['date'],
+                                    "startTime": distance.get('startTime', '').strip()
+                                })
+                    if cleaned_distances:
+                        event['distances'] = cleaned_distances
+                    else:
+                        event['distances'] = [{"distance": "Unknown", "date": event['date']}]
                 
-                # Validate email format if present
-                if event.get('rideManagerContact') and event['rideManagerContact'].get('email'):
-                    email = event['rideManagerContact']['email']
-                    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-                        logger.warning(f"Invalid email format for {event['rideName']}: {email}")
-                        event['rideManagerContact']['email'] = None
-                        self.metrics.validation_errors += 1
+                # Clean and validate contact information
+                if event.get('rideManagerContact'):
+                    contact = event['rideManagerContact']
+                    # Clean email
+                    if contact.get('email'):
+                        email = contact['email'].strip().lower()
+                        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+                            logger.warning(f"Invalid email format for {event['rideName']}: {email}")
+                            contact['email'] = None
+                            self.metrics.validation_errors += 1
+                    # Clean phone
+                    if contact.get('phone'):
+                        phone = re.sub(r'[^\d+]', '', contact['phone'])
+                        if not re.match(r'^\+?\d{10,}$', phone):
+                            logger.warning(f"Invalid phone format for {event['rideName']}: {contact['phone']}")
+                            contact['phone'] = None
+                            self.metrics.validation_errors += 1
+                    # Clean name
+                    if contact.get('name'):
+                        contact['name'] = contact['name'].strip()
                 
-                # Ensure location is set
-                event['location'] = event.get('location', 'Location TBA')
+                # Clean and validate control judges
+                if event.get('controlJudges'):
+                    cleaned_judges = []
+                    for judge in event['controlJudges']:
+                        if isinstance(judge, dict) and judge.get('name'):
+                            cleaned_judges.append({
+                                "role": judge.get('role', 'Judge').strip(),
+                                "name": judge['name'].strip()
+                            })
+                    event['controlJudges'] = cleaned_judges
                 
                 # Generate a stable external ID if missing
                 if not event.get('tag'):
                     event['tag'] = int(hashlib.md5(
-                        f"{event['rideName']}-{event['date']}".encode()
+                        f"{event['rideName']}-{event['date']}-{event['location']}".encode()
                     ).hexdigest()[:8], 16)
                 
                 valid_events.append(event)
@@ -536,6 +858,7 @@ class AERCScraper:
         
         logger.info(f"Validated {len(valid_events)} out of {len(events)} events")
         self.metrics.events_valid = len(valid_events)
+        self.metrics.events_duplicate = len(events) - len(valid_events) - self.metrics.validation_errors
         return valid_events
     
     def fallback_extraction(self, html: str) -> List[Dict[str, Any]]:
@@ -680,89 +1003,49 @@ class AERCScraper:
                                 if distance_date > date_end:
                                     date_end = distance_date
                             except ValueError:
-                                pass
+                                continue
                 
-                # Extract judges to a list of strings
-                judges = []
-                if event.get('controlJudges'):
-                    judges = [f"{judge.get('role', '')}: {judge.get('name', '')}" for judge in event['controlJudges']]
-                
-                # Extract manager contact details
-                manager_email = None
-                manager_phone = None
-                if event.get('rideManagerContact'):
-                    manager_email = event['rideManagerContact'].get('email')
-                    manager_phone = event['rideManagerContact'].get('phone')
-                
-                # Prepare event details JSON
-                event_details = {
-                    "controlJudges": event.get('controlJudges', []),
-                    "directions": event.get('directions'),
-                    "mapLink": event.get('mapLink'),
-                    "hasIntroRide": event.get('hasIntroRide', False),
-                }
-                
-                # Prepare notes text combining relevant information
-                notes_parts = []
-                
-                # Add manager contact details to notes
+                # Create contact info string
+                contact_info = []
+                if event.get('rideManager'):
+                    contact_info.append(f"Ride Manager: {event['rideManager']}")
                 if event.get('rideManagerContact'):
                     contact = event['rideManagerContact']
-                    manager_contact = []
-                    if contact.get('name'):
-                        manager_contact.append(contact['name'])
-                    if contact.get('email'):
-                        manager_contact.append(contact['email'])
                     if contact.get('phone'):
-                        manager_contact.append(contact['phone'])
-                    
-                    if manager_contact:
-                        notes_parts.append(f"Manager contact: {', '.join(manager_contact)}")
+                        contact_info.append(f"Phone: {contact['phone']}")
+                    if contact.get('email'):
+                        contact_info.append(f"Email: {contact['email']}")
                 
-                # Add control judges to notes
+                # Format control judges
+                judges = []
                 if event.get('controlJudges'):
-                    judge_notes = []
                     for judge in event['controlJudges']:
-                        judge_notes.append(f"{judge.get('role', 'Judge')}: {judge.get('name', '')}")
-                    if judge_notes:
-                        notes_parts.append("Control judges: " + "; ".join(judge_notes))
+                        if judge.get('name'):
+                            role = judge.get('role', 'Judge')
+                            judges.append(f"{role}: {judge['name']}")
                 
-                # Add directions to notes if available
-                if event.get('directions'):
-                    notes_parts.append(f"Directions: {event['directions']}")
-                
-                # Add any description to notes
-                if event.get('description'):
-                    notes_parts.append(event['description'])
-                
-                # Create event - USING CORRECT FIELD NAMES FROM DATABASE SCHEMA
+                # Create event object
                 db_event = EventCreate(
-                    name=event.get('rideName', "Unknown Event"),
-                    description=event.get('description', ""),
-                    location=event.get('location', ""),
-                    date_start=date_start,  # Using date_start to match schema
-                    date_end=date_end,      # Using date_end to match schema
-                    organizer="AERC",
-                    website=event.get('website', ""),
-                    flyer_url="",  # AERC doesn't provide flyers in the calendar
-                    region=f"AERC {event.get('region', '')}",
+                    name=event['rideName'],
+                    date_start=date_start,
+                    date_end=date_end,
+                    location=event['location'],
+                    region=event.get('region', 'Unknown'),
+                    event_type='endurance',
+                    description="\n".join(contact_info) if contact_info else None,
+                    additional_info="\n".join(judges) if judges else None,
                     distances=distances,
-                    source="aerc_scraper",
-                    
-                    # New fields
-                    ride_manager=event.get('rideManager'),
-                    manager_contact=event.get('rideManagerContact', {}).get('email', '') or 
-                                   event.get('rideManagerContact', {}).get('phone', ''),
-                    event_type="AERC Endurance",
-                    event_details=event_details,
-                    notes="\n\n".join(notes_parts) if notes_parts else None,
+                    map_url=event.get('mapLink'),
+                    has_intro_ride=event.get('hasIntroRide', False),
                     external_id=str(event.get('tag')) if event.get('tag') else None,
+                    source='AERC'
                 )
                 
                 db_events.append(db_event)
-            
+                
             except Exception as e:
                 logger.error(f"Error converting event to DB schema: {e}")
+                continue
         
         return db_events
     
@@ -875,6 +1158,22 @@ class AERCScraper:
             "validation_errors": self.metrics.validation_errors,
             "success_rate": (self.metrics.events_valid / self.metrics.events_found * 100) if self.metrics.events_found > 0 else 0
         }
+
+    async def _run_in_terminal(self, command: str) -> str:
+        """Run a command in terminal and return output."""
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            logger.error(f"Command failed with exit code {process.returncode}")
+            logger.error(f"stderr: {stderr.decode()}")
+            raise RuntimeError(f"Command failed: {stderr.decode()}")
+            
+        return stdout.decode()
 
 async def run_aerc_scraper(db: AsyncSession) -> Dict[str, Any]:
     """Run the AERC scraper."""

@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 import os
 import logging
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,23 @@ class ScraperMetrics:
     gemini_calls: int = 0
     gemini_errors: int = 0
     fallback_used: bool = False
+    memory_samples: List[Dict[str, float]] = None
+    
+    def __post_init__(self):
+        self.memory_samples = []
+    
+    def sample_memory(self) -> Dict[str, float]:
+        """Take a sample of current memory usage."""
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        sample = {
+            'timestamp': datetime.now().isoformat(),
+            'rss': memory_info.rss / 1024 / 1024,  # RSS in MB
+            'vms': memory_info.vms / 1024 / 1024,  # VMS in MB
+            'percent': process.memory_percent()
+        }
+        self.memory_samples.append(sample)
+        return sample
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert metrics to dictionary format."""
@@ -49,7 +67,8 @@ class ScraperMetrics:
             "gemini_errors": self.gemini_errors,
             "fallback_used": self.fallback_used,
             "success_rate": (self.events_valid / self.events_found * 100) if self.events_found > 0 else 0,
-            "processing_rate": (self.events_valid / self.calendar_rows_found * 100) if self.calendar_rows_found > 0 else 0
+            "processing_rate": (self.events_valid / self.calendar_rows_found * 100) if self.calendar_rows_found > 0 else 0,
+            "memory_samples": self.memory_samples
         }
     
     def log_summary(self) -> None:
@@ -74,6 +93,12 @@ class ScraperMetrics:
             logger.info(f"Event validation rate: {self.events_valid / self.events_found * 100:.1f}%")
         if self.calendar_rows_found > 0:
             logger.info(f"Calendar processing rate: {self.events_valid / self.calendar_rows_found * 100:.1f}%")
+        
+        if self.memory_samples:
+            peak_memory = max(sample['rss'] for sample in self.memory_samples)
+            avg_memory = sum(sample['rss'] for sample in self.memory_samples) / len(self.memory_samples)
+            logger.info(f"Peak memory usage: {peak_memory:.2f} MB")
+            logger.info(f"Average memory usage: {avg_memory:.2f} MB")
     
     def save_to_file(self, metrics_dir: str = "logs/metrics") -> None:
         """Save metrics to a JSON file."""
