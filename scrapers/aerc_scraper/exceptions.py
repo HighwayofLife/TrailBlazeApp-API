@@ -20,8 +20,8 @@ class CacheError(ScraperError):
     """Raised when cache operations fail."""
     pass
 
-class GeminiAPIError(ScraperError):
-    """Raised when Gemini API calls fail."""
+class AIError(ScraperError):
+    """Raised when AI operations fail."""
     pass
 
 class DatabaseError(ScraperError):

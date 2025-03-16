@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 
 from scrapers.aerc_scraper.gemini_client import GeminiClient
-from scrapers.exceptions import APIError
+from scrapers.exceptions import AIError
 
 @dataclass
 class MockSettings:
@@ -96,7 +96,7 @@ async def test_both_models_fail(client):
         )
         client.client = mock_client.return_value
         
-        with pytest.raises(APIError, match="Both models failed"):
+        with pytest.raises(AIError, match="Both models failed"):
             await client.extract_data("<div>Sample HTML</div>")
         
         assert client.metrics["errors"] == 2
@@ -123,7 +123,7 @@ async def test_invalid_json_response(client):
         )
         client.client = mock_client.return_value
         
-        with pytest.raises(APIError):
+        with pytest.raises(AIError):
             await client.extract_data("<div>Sample HTML</div>")
 
 def test_metrics_tracking(client):

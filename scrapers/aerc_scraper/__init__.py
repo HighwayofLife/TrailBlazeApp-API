@@ -9,7 +9,7 @@ from .exceptions import (
     DataExtractionError,
     ValidationError,
     CacheError,
-    GeminiAPIError,
+    AIError,
     DatabaseError
 )
 
@@ -24,7 +24,7 @@ __all__ = [
     'DataExtractionError',
     'ValidationError',
     'CacheError',
-    'GeminiAPIError',
+    'AIError',
     'DatabaseError'
 ]
 

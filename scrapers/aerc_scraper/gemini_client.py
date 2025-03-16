@@ -8,7 +8,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from google import genai
 from .config import get_settings  # Changed from ..config import get_scraper_settings
-from ..exceptions import APIError, DataExtractionError
+from ..exceptions import AIError, DataExtractionError
 
 logger = logging.getLogger(__name__)
 
@@ -109,13 +109,13 @@ class GeminiClient:
                 self.metrics['fallback_successes'] += 1
                 return result
             
-            raise APIError("Gemini", f"Both models failed to extract data from chunk {chunk_idx}")
+            raise AIError("Gemini", f"Both models failed to extract data from chunk {chunk_idx}")
             
         except Exception as e:
             self.metrics['errors'] += 1
-            if isinstance(e, APIError):
+            if isinstance(e, AIError):
                 raise
-            raise APIError("Gemini", f"Data extraction failed: {str(e)}")
+            raise AIError("Gemini", f"Data extraction failed: {str(e)}")
     
     def _process_response(self, response: Any, chunk_idx: int) -> Optional[List[Dict[str, Any]]]:
         """Process and validate Gemini API response."""
