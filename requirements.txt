@@ -1,48 +1,33 @@
-# FastAPI and related libraries
-fastapi>=0.109.2
-uvicorn>=0.27.1
-pydantic==2.10.6
-pydantic-settings>=2.0.3
-python-dotenv>=1.0.1
+# Core dependencies
+fastapi==0.110.0
+uvicorn==0.27.1
+python-dotenv==1.0.1
+pydantic==2.6.3
+pydantic-settings==2.2.1
+sqlalchemy==2.0.27
+alembic==1.13.1
+asyncpg==0.29.0
 
-# Database
-sqlalchemy>=2.0.25
-alembic>=1.13.1
-psycopg2-binary==2.9.10
-asyncpg>=0.29.0
-
-# HTTP client
-requests>=2.31.0
-aiohttp>=3.9.3
-
-# Scraping
-beautifulsoup4>=4.12.3
-scrapy>=2.10.0
-Brotli>=1.1.0
-lxml>=5.1.0
-html5lib>=1.1
+# Scraping and parsing
+beautifulsoup4==4.12.3
+lxml==5.1.0
+cssselect==1.2.0
+aiohttp==3.9.3
+google-generativeai>=0.3.2
 
 # Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.1
-pytest-cov>=4.1.0
-httpx==0.28.1
-
-# Logging
-python-json-logger>=2.0.7
+pytest==8.0.2
+pytest-asyncio==0.23.5
+pytest-cov==4.1.0
+httpx==0.27.0
 
 # Utilities
-python-multipart>=0.0.6
-email-validator>=2.0.0
-aiofiles==24.1.0
-tenacity>=8.2.3
+python-dateutil==2.8.2
+pytz==2024.1
+tenacity==8.2.3
+backoff==2.2.1
+cachetools==5.3.2
 
-# AI and Data Processing
-google-genai>=0.1.0
-google-cloud-storage>=2.14.0
-jsonschema>=4.21.1
-cachetools>=5.3.2
-
-# Monitoring
-psutil>=5.9.8
-prometheus_client>=0.19.0
+# Logging and monitoring
+structlog==24.1.0
+prometheus-client==0.19.0
