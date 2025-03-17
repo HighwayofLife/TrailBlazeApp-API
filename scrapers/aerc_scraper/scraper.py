@@ -5,9 +5,12 @@ AERC Calendar Scraper with modular architecture and enhanced error handling.
 
 import logging
 import asyncio
+import os
+import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 from ..base_scraper import BaseScraper
 from .config import ScraperSettings, get_settings
@@ -183,31 +186,54 @@ class AERCScraper(BaseScraper):
                 raise ScraperError("Failed to extract structured data")
             
             # 5. Validate events
-            logger.info("Validating events")
+            logger.info(f"Validating {len(all_events)} events")
             valid_events = self.validate_data(all_events)
             if not valid_events:
                 raise ScraperError("No valid events found")
             
+            # Check for validation failures
+            validation_failures = len(all_events) - len(valid_events)
+            if validation_failures > 0:
+                logger.warning(f"{validation_failures} events failed validation")
+                
+                # If we have a significant number of failures, log details for debugging
+                if validation_failures > 5:
+                    # Try to identify patterns in failed events
+                    self._analyze_validation_failures(all_events, valid_events)
+            
             # 6. Convert to database schema
-            logger.info("Converting to database schema")
+            logger.info(f"Converting {len(valid_events)} events to database schema")
             db_events = self.convert_to_db_schema(valid_events)
             if not db_events:
                 raise ScraperError("Failed to convert events to database schema")
             
             # 7. Store in database
-            logger.info("Storing events in database")
+            logger.info(f"Storing {len(db_events)} events in database")
             db_metrics = await self.db_handler.store_events(db_events, db)
+            
+            # 8. Verify event counts
+            await self._verify_event_counts(db, all_events, valid_events, db_events, db_metrics)
             
             # Update metrics
             self.metrics.end_time = datetime.now()
-            self.metrics.update({
+            metrics_update = {
                 **self.network.get_metrics(),
                 **self.html_cleaner.get_metrics(),
                 **self.gemini_client.get_metrics(),
                 **self.validator.get_metrics(),
                 **self.cache.get_metrics(),
-                **db_metrics
-            })
+                **db_metrics,
+                'events_found': self.gemini_client.metrics['events_found'],
+                'events_extracted': self.gemini_client.metrics['events_extracted'],
+                'events_processed': self.gemini_client.metrics['events_processed'],
+                'events_valid': len(valid_events),
+                'events_added': db_metrics.get('added', 0),
+                'events_updated': db_metrics.get('updated', 0),
+                'events_skipped': db_metrics.get('skipped', 0),
+                'events_with_issues_count': len(self.gemini_client.metrics['events_with_issues']),
+                'validation_failures': validation_failures,
+            }
+            self.metrics.update(metrics_update)
             
             # Log metrics summary
             self.metrics.log_summary()
@@ -216,13 +242,14 @@ class AERCScraper(BaseScraper):
             return {
                 "status": "success",
                 "scraper": "aerc_calendar",
-                "events_found": self.metrics.events_found,
-                "events_valid": self.metrics.events_valid,
-                "events_added": db_metrics['added'],
-                "events_updated": db_metrics['updated'],
-                "events_skipped": db_metrics['skipped'],
-                "validation_errors": self.metrics.validation_errors,
-                "success_rate": (self.metrics.events_valid / self.metrics.events_found * 100) if self.metrics.events_found > 0 else 0
+                "events_found": self.gemini_client.metrics['events_found'],
+                "events_extracted": self.gemini_client.metrics['events_extracted'],
+                "events_valid": len(valid_events),
+                "events_added": db_metrics.get('added', 0),
+                "events_updated": db_metrics.get('updated', 0),
+                "events_skipped": db_metrics.get('skipped', 0),
+                "validation_failures": validation_failures,
+                "success_rate": (len(valid_events) / len(all_events) * 100) if len(all_events) > 0 else 0
             }
             
         except Exception as e:
@@ -264,6 +291,157 @@ class AERCScraper(BaseScraper):
         
         logger.info(f"Split HTML into {len(chunks)} chunks")
         return chunks
+
+    def _analyze_validation_failures(self, all_events, valid_events):
+        """Analyze validation failures to identify patterns."""
+        # Create sets of event identifiers for comparison
+        valid_event_names = {event.get('name', '') for event in valid_events}
+        
+        # Find events that failed validation
+        failed_events = [event for event in all_events 
+                        if event.get('name', '') not in valid_event_names]
+        
+        logger.info(f"Analyzing {len(failed_events)} validation failures")
+        
+        # Check for common issues
+        missing_fields = {'name': 0, 'date_start': 0, 'location': 0}
+        invalid_dates = 0
+        other_issues = 0
+        
+        for event in failed_events:
+            # Check for missing required fields
+            for field in ['name', 'date_start', 'location']:
+                if field not in event or not event[field]:
+                    missing_fields[field] += 1
+            
+            # Check for date format issues
+            if 'date_start' in event and event['date_start']:
+                try:
+                    if isinstance(event['date_start'], str):
+                        datetime.strptime(event['date_start'], '%Y-%m-%d')
+                except ValueError:
+                    invalid_dates += 1
+            
+            # If none of the above, count as other issue
+            if all(field in event and event[field] for field in ['name', 'date_start', 'location']) and invalid_dates == 0:
+                other_issues += 1
+        
+        # Log findings
+        logger.info(f"Validation failure analysis:")
+        logger.info(f"  - Missing name field: {missing_fields['name']}")
+        logger.info(f"  - Missing date_start field: {missing_fields['date_start']}")
+        logger.info(f"  - Missing location field: {missing_fields['location']}")
+        logger.info(f"  - Invalid date formats: {invalid_dates}")
+        logger.info(f"  - Other validation issues: {other_issues}")
+        
+        # Log sample failed events for debugging
+        if failed_events:
+            sample_size = min(3, len(failed_events))
+            logger.debug(f"Sample of failed events:")
+            for i in range(sample_size):
+                logger.debug(f"Failed event {i+1}: {json.dumps(failed_events[i], indent=2, default=str)}")
+
+    async def _verify_event_counts(self, db, all_events, valid_events, db_events, db_metrics):
+        """Verify event counts against database results."""
+        # Calculate expected results
+        events_found = self.gemini_client.metrics['events_found']
+        events_extracted = self.gemini_client.metrics['events_extracted']
+        events_valid = len(valid_events)
+        events_db_processed = len(db_events)
+        events_added = db_metrics.get('added', 0)
+        events_updated = db_metrics.get('updated', 0)
+        events_skipped = db_metrics.get('skipped', 0)
+        
+        # Check database count for AERC events specifically
+        db_count = await self._get_db_event_count(db)
+        
+        # Log verification results with more visibility
+        logger.info("="*50)
+        logger.info("              EVENT COUNT VERIFICATION              ")
+        logger.info("="*50)
+        logger.info(f"Events found in HTML (estimated): {events_found}")
+        logger.info(f"Events extracted by Gemini: {events_extracted}")
+        logger.info(f"Events after validation: {events_valid}")
+        logger.info(f"Events prepared for database: {events_db_processed}")
+        logger.info(f"Events added to database: {events_added}")
+        logger.info(f"Events updated in database: {events_updated}")
+        logger.info(f"Events skipped (duplicates): {events_skipped}")
+        logger.info(f"Total AERC events in database: {db_count}")
+        logger.info("-"*50)
+        
+        # Calculate discrepancies
+        extraction_loss = events_found - events_extracted if events_found > 0 else 0
+        validation_loss = events_extracted - events_valid
+        db_processing_loss = events_valid - events_db_processed
+        db_storage_discrepancy = events_db_processed - (events_added + events_updated + events_skipped)
+        
+        # Log any significant discrepancies
+        if extraction_loss > 0 and events_found > 0:
+            percent_loss = (extraction_loss / events_found) * 100
+            logger.warning(f"Lost {extraction_loss} events during extraction ({percent_loss:.2f}%)")
+            
+            # Add more detailed analysis if loss is significant
+            if percent_loss > 10:
+                logger.error(f"Significant extraction loss: {percent_loss:.2f}%! Check chunking and extraction logic.")
+        
+        if validation_loss > 0 and events_extracted > 0:
+            percent_loss = (validation_loss / events_extracted) * 100
+            logger.warning(f"Lost {validation_loss} events during validation ({percent_loss:.2f}%)")
+            
+            # Add more detailed analysis if loss is significant
+            if percent_loss > 10:
+                logger.error(f"Significant validation loss: {percent_loss:.2f}%! Check validation requirements.")
+        
+        if db_processing_loss > 0 and events_valid > 0:
+            percent_loss = (db_processing_loss / events_valid) * 100
+            logger.warning(f"Lost {db_processing_loss} events during database preparation ({percent_loss:.2f}%)")
+        
+        if db_storage_discrepancy != 0:
+            logger.warning(f"Database storage discrepancy: {db_storage_discrepancy} events unaccounted for")
+        
+        # If we're in development and expected extraction to match database (ignoring updates/skips)
+        is_dev_env = os.environ.get('ENVIRONMENT', '').lower() == 'development'
+        if is_dev_env:
+            # In development, we expect all extracted events to be in the database
+            expected_db_total = events_added + events_updated
+            
+            if db_count < expected_db_total:
+                logger.error(f"Database count ({db_count}) is less than expected ({expected_db_total})")
+                logger.error(f"Missing events: {expected_db_total - db_count}")
+            
+            if events_extracted > 0:
+                percent_captured = ((events_added + events_updated) / events_extracted) * 100
+                logger.info(f"Captured {percent_captured:.2f}% of extracted events in the database")
+                
+                if percent_captured < 90:
+                    logger.warning(f"Low capture rate: {percent_captured:.2f}%. Check validation and database insertion.")
+        
+        # Add a summary line for metrics
+        logger.info("="*50)
+        # Add this info to the metrics
+        self.metrics.update({
+            'verification': {
+                'events_found': events_found,
+                'events_extracted': events_extracted,
+                'events_valid': events_valid,
+                'events_db_processed': events_db_processed,
+                'events_added': events_added,
+                'events_updated': events_updated,
+                'events_skipped': events_skipped,
+                'total_db_count': db_count
+            }
+        })
+
+    async def _get_db_event_count(self, db: AsyncSession) -> int:
+        """Get the count of AERC events in the database."""
+        try:
+            # Use SQLAlchemy properly with text() - count only AERC source events
+            result = await db.execute(text("SELECT COUNT(*) FROM events WHERE source = 'AERC'"))
+            count = result.scalar()
+            return count or 0
+        except Exception as e:
+            logger.error(f"Error counting database events: {e}")
+            return 0
 
 async def run_aerc_scraper(db: AsyncSession) -> Dict[str, Any]:
     """Run the AERC scraper."""

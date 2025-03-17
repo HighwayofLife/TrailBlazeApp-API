@@ -25,10 +25,11 @@ class AERCScraperSettings(ScraperSettings):
     refresh_cache: bool = False
     
     # Chunking settings
-    initial_chunk_size: int = 30000
-    min_chunk_size: int = 15000
-    max_chunk_size: int = 45000
-    chunk_adjust_factor: float = 0.75
+    initial_chunk_size: int = 10000  # Initial HTML chunk size in characters (for first level chunking)
+    min_chunk_size: int = 5000      # Minimum HTML chunk size (used for further chunking when needed)
+    max_chunk_size: int = 15000     # Maximum HTML chunk size (upper bound for any chunking operation)
+    html_chunk_size: int = 5000     # Standard HTML chunk size for direct use by GeminiClient
+    chunk_adjust_factor: float = 0.75  # Factor to adjust chunk size when needed (multiplier)
     
     # AERC URLs
     base_url: str = "https://aerc.org/wp-admin/admin-ajax.php"

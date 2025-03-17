@@ -21,7 +21,8 @@ class DataValidator:
         self.metrics = {
             'validated': 0,
             'invalid': 0,
-            'validation_time': 0.0
+            'validation_time': 0.0,
+            'validation_failures': []  # Store details about validation failures
         }
         self.debug_mode = debug_mode or os.environ.get('SCRAPER_DEBUG', '').lower() == 'true'
         self.exit_on_first_error = exit_on_first_error or os.environ.get('SCRAPER_EXIT_ON_ERROR', '').lower() == 'true'
@@ -37,6 +38,9 @@ class DataValidator:
         
         for event_data in events:
             try:
+                # Store the original data for potential retry
+                original_data = event_data.copy()
+                
                 # Ensure required base fields are present
                 self._check_required_fields(event_data)
                 
@@ -71,6 +75,29 @@ class DataValidator:
                 self.metrics['invalid'] += 1
                 error_msg = f"Validation error for event {event_data.get('name', 'Unknown')}: {str(e)}"
                 logger.error(error_msg)
+                
+                # Store information about the validation failure
+                failure_info = {
+                    'event_data': original_data,
+                    'error_type': type(e).__name__,
+                    'error_message': str(e),
+                    'event_name': event_data.get('name', 'Unknown'),
+                    'missing_fields': []
+                }
+                
+                # Check for missing required fields
+                for field in ['name', 'date_start', 'location']:
+                    if field not in event_data or not event_data.get(field):
+                        failure_info['missing_fields'].append(field)
+                
+                # Check for date format issues
+                if 'date_start' in event_data and isinstance(event_data.get('date_start'), str):
+                    try:
+                        datetime.strptime(event_data['date_start'], '%Y-%m-%d')
+                    except ValueError:
+                        failure_info['date_format_issue'] = True
+                
+                self.metrics['validation_failures'].append(failure_info)
                 
                 # Print the JSON blob for debugging if in debug mode
                 if self.debug_mode:

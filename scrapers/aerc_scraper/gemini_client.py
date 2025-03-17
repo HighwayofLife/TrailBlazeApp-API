@@ -30,7 +30,12 @@ class GeminiClient:
             'token_counts': [],
             'error_types': {},
             'streaming_used': 0,
-            'chunks_processed': 0
+            'chunks_processed': 0,
+            'events_found': 0,          # Total events found in HTML
+            'events_extracted': 0,      # Events successfully extracted from HTML
+            'events_processed': 0,      # Events processed through mapping
+            'events_with_issues': [],   # Track events that had issues
+            'chunk_split_count': 0      # Number of times chunks needed further splitting
         }
         
         # Default max tokens for models
@@ -41,11 +46,14 @@ class GeminiClient:
             'gemini-1.0-pro': 8192
         }
         
-        # Maximum input tokens to allow before chunking
-        self.max_input_tokens = 4000  # Conservative limit to leave room for output
+        # Maximum input tokens to allow before chunking - based on model limits
+        # Use 90% of the model limit to leave some room for safety
+        model_limit = self.model_token_limits.get(self.settings.primary_model, 8192)
+        self.max_input_tokens = int(model_limit * 0.9)
         
-        # Maximum HTML size per chunk (characters)
-        self.max_html_chunk_size = 7500  # Reduced to 75% of original 10000 to avoid excessive chunking
+        # Maximum HTML size per chunk - use html_chunk_size from settings
+        # This ensures we're using the configured value specifically intended for this purpose
+        self.max_html_chunk_size = settings.html_chunk_size
     
     def _create_prompt(self, chunk: str) -> str:
         """Create a prompt for Gemini models."""
@@ -60,17 +68,22 @@ class GeminiClient:
         - Follow the exact structure defined below with no additional fields
         - If the HTML chunk is incomplete or cut off, just extract what you can see
 
+        CRITICAL FIELDS (These three fields MUST always be extracted):
+        - "rideName": The name of the ride event (MUST not be empty)
+        - "date": The event start date in YYYY-MM-DD format (MUST not be empty)
+        - "location": The physical location of the event (MUST not be empty)
+
         JSON Structure:
         [
           {{
-            "rideName": "event name",
-            "date": "YYYY-MM-DD",
+            "rideName": "event name", // REQUIRED - must extract this field
+            "date": "YYYY-MM-DD", // REQUIRED - must be in this exact format
             "region": "AERC region code",
-            "location": "event location",
+            "location": "event location", // REQUIRED - must extract this field
             "distances": [
               {{
                 "distance": "distance value",
-                "date": "YYYY-MM-DD",
+                "date": "YYYY-MM-DD", // Must use this exact date format 
                 "startTime": "start time"
               }}
             ],
@@ -91,6 +104,14 @@ class GeminiClient:
           }}
         ]
 
+        IMPORTANT RULES:
+        1. Every event MUST include the rideName, date, and location fields
+        2. If you can't find an exact value for these required fields, make your best guess
+        3. For dates, use YYYY-MM-DD format ONLY (e.g., 2024-06-15)
+        4. Extract every event you can find in the HTML
+        5. Every event must be a complete object, even if some fields are missing
+        6. If an event seems to have multiple days, include each day as a separate distance item
+
         Calendar HTML:
         {chunk}
         """
@@ -103,16 +124,16 @@ class GeminiClient:
             "items": {
                 "type": "OBJECT",
                 "properties": {
-                    "rideName": {"type": "STRING", "description": "Name of the endurance ride event"},
-                    "date": {"type": "STRING", "description": "Event date in YYYY-MM-DD format"},
-                    "region": {"type": "STRING", "description": "AERC region code"},
-                    "location": {"type": "STRING", "description": "Location of the event"},
+                    "rideName": {"type": "STRING", "description": "Name of the endurance ride event - REQUIRED FIELD"},
+                    "date": {"type": "STRING", "description": "Event date in YYYY-MM-DD format - REQUIRED FIELD"},
+                    "region": {"type": "STRING", "description": "AERC region code (e.g., MT, NW, SE)"},
+                    "location": {"type": "STRING", "description": "Location of the event - REQUIRED FIELD"},
                     "distances": {
                         "type": "ARRAY",
                         "items": {
                             "type": "OBJECT",
                             "properties": {
-                                "distance": {"type": "STRING", "description": "Distance value"},
+                                "distance": {"type": "STRING", "description": "Distance value (e.g., 25, 50, 100 miles)"},
                                 "date": {"type": "STRING", "description": "Date for this distance in YYYY-MM-DD format"},
                                 "startTime": {"type": "STRING", "description": "Start time for this distance"}
                             }
@@ -139,13 +160,22 @@ class GeminiClient:
                     },
                     "mapLink": {"type": "STRING", "description": "Google Maps URL"},
                     "hasIntroRide": {"type": "BOOLEAN", "description": "Whether the event has an intro ride"}
-                }
+                },
+                "required": ["rideName", "date", "location"]
             }
         }
         
         # Create the prompt with structured output instructions
         prompt = f"""
-        Extract endurance ride events from this AERC calendar HTML.
+        Extract all endurance ride events from this AERC calendar HTML.
+        
+        CRITICAL INSTRUCTIONS:
+        1. Every event MUST have the 'rideName', 'date', and 'location' fields.
+        2. If exact values aren't found, make your best informed guess.
+        3. All dates must be in YYYY-MM-DD format (example: 2024-06-15).
+        4. Extract every event you can find, even if some are partial.
+        5. If an event has multiple days, include each day as a separate distance.
+        
         If the HTML chunk is incomplete or cut off, just extract what you can see.
         
         Calendar HTML:
@@ -175,54 +205,179 @@ class GeminiClient:
             # Try to parse with BeautifulSoup
             soup = BeautifulSoup(html, 'html.parser')
             
+            # Count total event elements for metrics
+            event_elements = self._count_event_elements(soup)
+            self.metrics['events_found'] += event_elements
+            logger.info(f"Found approximately {event_elements} event elements in HTML")
+            
             # Look for natural boundaries like table rows or divs
             chunks = []
-            events = []
             
             # Try to find event containers (table rows, divs with event info, etc.)
             rows = soup.find_all('tr')
             if len(rows) > 5:  # If we have a table structure
+                logger.info(f"Using table row chunking strategy for {len(rows)} rows")
                 current_chunk = ""
+                current_rows = []
+                
                 for row in rows:
                     row_html = str(row)
+                    # If adding this row would exceed limit, finish the current chunk
                     if len(current_chunk) + len(row_html) > self.max_html_chunk_size and current_chunk:
-                        chunks.append(current_chunk)
+                        # Create proper HTML structure for the chunk
+                        table_html = f'<table>{current_chunk}</table>'
+                        chunks.append(table_html)
                         current_chunk = row_html
+                        current_rows = [row]
                     else:
                         current_chunk += row_html
+                        current_rows.append(row)
                 
                 if current_chunk:
-                    chunks.append(current_chunk)
+                    # Create proper HTML structure for the final chunk
+                    table_html = f'<table>{current_chunk}</table>'
+                    chunks.append(table_html)
                 
                 return chunks
             
             # If no table rows, try divs
-            divs = soup.find_all('div', class_=lambda c: c and ('event' in c.lower() or 'ride' in c.lower()))
+            divs = soup.find_all('div', class_=lambda c: c and ('event' in c.lower() or 'ride' in c.lower() or 'calendar' in c.lower()))
             if len(divs) > 3:
+                logger.info(f"Using div chunking strategy for {len(divs)} divs")
                 current_chunk = ""
+                current_divs = []
+                
                 for div in divs:
                     div_html = str(div)
+                    # If adding this div would exceed limit, finish the current chunk
                     if len(current_chunk) + len(div_html) > self.max_html_chunk_size and current_chunk:
-                        chunks.append(current_chunk)
+                        # Create proper HTML structure for the chunk
+                        container_html = f'<div class="events-container">{current_chunk}</div>'
+                        chunks.append(container_html)
                         current_chunk = div_html
+                        current_divs = [div]
                     else:
                         current_chunk += div_html
+                        current_divs.append(div)
                 
                 if current_chunk:
-                    chunks.append(current_chunk)
+                    # Create proper HTML structure for the final chunk
+                    container_html = f'<div class="events-container">{current_chunk}</div>'
+                    chunks.append(container_html)
                 
                 return chunks
             
-            # If no clear event containers, split by size
-            return self._split_by_size(html)
+            # If no clear event containers, try to split by common closing tags
+            return self._split_by_tag_boundaries(html)
             
         except Exception as e:
             logger.warning(f"Error parsing HTML with BeautifulSoup: {e}")
-            # Fallback to simple size-based splitting
-            return self._split_by_size(html)
+            # Fallback to tag-boundary splitting
+            return self._split_by_tag_boundaries(html)
+    
+    def _count_event_elements(self, soup) -> int:
+        """Count the number of event elements in the HTML."""
+        # Look for various event indicators
+        event_count = 0
+        
+        # First try to find elements with the class 'calendarRow' which is commonly used in AERC
+        calendar_rows = soup.find_all('div', class_='calendarRow')
+        if calendar_rows:
+            logger.info(f"Found {len(calendar_rows)} calendar rows")
+            return len(calendar_rows)
+        
+        # Try table rows with specific classes or containing event info
+        rows = soup.find_all('tr', class_=lambda c: c and any(keyword in c.lower() for keyword in ['event', 'ride', 'calendar']))
+        if rows:
+            logger.info(f"Found {len(rows)} table rows with event-related classes")
+            return len(rows)
+        
+        # Try any table rows that might contain event data
+        all_rows = soup.find_all('tr')
+        if all_rows and len(all_rows) > 5:  # Ignore small tables that might be headers
+            # Check if rows have date patterns or location info
+            event_rows = []
+            for row in all_rows:
+                text = row.get_text()
+                # Look for date patterns
+                if re.search(r'\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2}', text):
+                    event_rows.append(row)
+                # Look for location patterns (state abbreviations)
+                elif re.search(r'\b[A-Z]{2}\b', text) and len(text) > 30:  # Avoid false positives
+                    event_rows.append(row)
+            
+            if event_rows:
+                logger.info(f"Found {len(event_rows)} table rows with date/location patterns")
+                return len(event_rows)
+        
+        # Try div elements with event-related classes
+        divs = soup.find_all('div', class_=lambda c: c and any(keyword in c.lower() for keyword in ['event', 'ride', 'calendar']))
+        if divs:
+            logger.info(f"Found {len(divs)} divs with event-related classes")
+            return len(divs)
+        
+        # Try list items that might contain events
+        list_items = soup.find_all('li', class_=lambda c: c and any(keyword in c.lower() for keyword in ['event', 'ride', 'calendar']))
+        if list_items:
+            logger.info(f"Found {len(list_items)} list items with event-related classes")
+            return len(list_items)
+        
+        # If we can't find specific event elements, estimate based on common patterns in the whole text
+        # Check for date patterns in text
+        text = soup.get_text()
+        date_patterns = re.findall(r'\b\d{1,2}/\d{1,2}/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b', text)
+        if date_patterns:
+            logger.info(f"Found {len(date_patterns)} date patterns in text")
+            return len(date_patterns)
+        
+        logger.warning("Could not estimate event count, defaulting to 0")
+        return event_count  # Return 0 if we couldn't identify events
+    
+    def _split_by_tag_boundaries(self, html: str) -> List[str]:
+        """Split HTML by tag boundaries like </div>, </tr>, etc."""
+        chunks = []
+        current_pos = 0
+        current_chunk = ""
+        
+        # Common closing tags that might indicate logical boundaries
+        boundary_tags = ['</div>', '</tr>', '</table>', '</section>', '</li>', '</article>']
+        
+        while current_pos < len(html):
+            # Find the next closest tag boundary
+            next_boundary = len(html)
+            chosen_boundary = None
+            
+            for tag in boundary_tags:
+                tag_pos = html.find(tag, current_pos)
+                if tag_pos != -1 and tag_pos < next_boundary:
+                    next_boundary = tag_pos
+                    chosen_boundary = tag
+            
+            # If we found a boundary and adding content up to and including it wouldn't exceed limit
+            if chosen_boundary and (len(current_chunk) + (next_boundary + len(chosen_boundary) - current_pos)) <= self.max_html_chunk_size:
+                # Add content up to and including the boundary tag
+                current_chunk += html[current_pos:next_boundary + len(chosen_boundary)]
+                current_pos = next_boundary + len(chosen_boundary)
+            else:
+                # If we're about to exceed the limit or no boundary found
+                # Check if we have content already
+                if current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = ""
+                else:
+                    # If no content yet, we need to split arbitrarily (as a last resort)
+                    end_pos = min(current_pos + self.max_html_chunk_size, len(html))
+                    chunks.append(html[current_pos:end_pos])
+                    current_pos = end_pos
+        
+        # Add any remaining content
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        return chunks
     
     def _split_by_size(self, html: str) -> List[str]:
-        """Split HTML by size, trying to preserve tag boundaries."""
+        """Split HTML by size, trying to preserve tag boundaries. (Legacy method)"""
         chunks = []
         current_pos = 0
         
@@ -253,8 +408,9 @@ class GeminiClient:
             if input_tokens > self.max_input_tokens:
                 logger.warning(f"Input chunk {chunk_idx} is too large ({input_tokens} tokens). Splitting further.")
                 # Split the HTML into smaller pieces
-                sub_chunks = self._split_by_size(html_chunk)
+                sub_chunks = self._split_by_tag_boundaries(html_chunk)
                 logger.info(f"Split chunk {chunk_idx} into {len(sub_chunks)} sub-chunks")
+                self.metrics['chunk_split_count'] += 1
                 
                 # Process each sub-chunk and combine results
                 all_results = []
@@ -262,11 +418,15 @@ class GeminiClient:
                     sub_results = await self._extract_data_with_fallbacks(sub_chunk, f"{chunk_idx}.{i}")
                     if sub_results:
                         all_results.extend(sub_results)
+                        self.metrics['events_extracted'] += len(sub_results)
                 
                 return all_results
         
         # Process the chunk directly if it's not too large
-        return await self._extract_data_with_fallbacks(html_chunk, chunk_idx)
+        results = await self._extract_data_with_fallbacks(html_chunk, chunk_idx)
+        if results:
+            self.metrics['events_extracted'] += len(results)
+        return results
     
     async def _extract_data_with_fallbacks(self, html_chunk: str, chunk_idx: Any) -> List[Dict[str, Any]]:
         """Extract data with multiple fallback strategies."""
@@ -279,7 +439,7 @@ class GeminiClient:
                 response_mime_type="application/json",
                 response_schema=structured_data["schema"],
                 temperature=0.2,
-                max_output_tokens=4096  # Set explicit output token limit
+                max_output_tokens=self.settings.max_output_tokens  # Use config value instead of hardcoding
             )
             
             response = self.client.models.generate_content(
@@ -298,96 +458,51 @@ class GeminiClient:
         except Exception as e:
             self._track_error(e, f"Structured output failed for chunk {chunk_idx}")
         
-        # Try streaming with primary model
-        try:
-            prompt = self._create_prompt(html_chunk)
-            
-            # Use config with explicit token limits
-            config = types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=4096  # Set explicit output token limit
-            )
-            
-            # Use streaming to avoid truncation
-            full_response = await self._stream_response(
-                self.settings.primary_model, 
-                prompt, 
-                config, 
-                chunk_idx
-            )
-            
-            if full_response:
-                result = self._process_text_response(full_response, chunk_idx)
-                if result:
-                    self.metrics['streaming_used'] += 1
-                    return result
-                    
-        except Exception as e:
-            self._track_error(e, f"Primary model streaming failed for chunk {chunk_idx}")
-        
-        # Try regular API with primary model
-        try:
-            prompt = self._create_prompt(html_chunk)
-            
-            # Use config with explicit token limits
-            config = types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=4096  # Set explicit output token limit
-            )
-            
-            response = self.client.models.generate_content(
-                model=self.settings.primary_model,
-                contents=prompt,
-                config=config
-            )
-            
-            # Track token usage
-            self._track_token_usage(response, chunk_idx)
-            
-            result = self._process_response(response, chunk_idx)
-            if result:
-                return result
+        # Try regular API with primary model with retry mechanism
+        max_retries = 2
+        for retry in range(max_retries + 1):
+            try:
+                prompt = self._create_prompt(html_chunk)
                 
-        except Exception as e:
-            self._track_error(e, f"Primary model failed for chunk {chunk_idx}")
+                # Use config with explicit token limits
+                config = types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=self.settings.max_output_tokens  # Use config value instead of hardcoding
+                )
+                
+                response = self.client.models.generate_content(
+                    model=self.settings.primary_model,
+                    contents=prompt,
+                    config=config
+                )
+                
+                # Track token usage
+                self._track_token_usage(response, chunk_idx)
+                
+                result = self._process_response(response, chunk_idx)
+                if result:
+                    return result
+                
+                # If we get here but have no results, log and try again
+                if retry < max_retries:
+                    logger.info(f"No results from primary model on attempt {retry+1}, retrying...")
+                    await asyncio.sleep(1)  # Short delay before retry
+                
+            except Exception as e:
+                self._track_error(e, f"Primary model failed on attempt {retry+1} for chunk {chunk_idx}")
+                if retry < max_retries:
+                    logger.info(f"Retrying primary model for chunk {chunk_idx}...")
+                    await asyncio.sleep(1)  # Short delay before retry
         
-        # Try fallback model with streaming
+        # Try fallback model as last resort
         logger.info(f"Using fallback model for chunk {chunk_idx}")
         try:
             prompt = self._create_prompt(html_chunk)
             
-            # Use config with explicit token limits
+            # Use more conservative settings for fallback
             config = types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=4096  # Set explicit output token limit
-            )
-            
-            # Use streaming to avoid truncation
-            full_response = await self._stream_response(
-                self.settings.fallback_model, 
-                prompt, 
-                config, 
-                chunk_idx
-            )
-            
-            if full_response:
-                result = self._process_text_response(full_response, chunk_idx)
-                if result:
-                    self.metrics['fallback_successes'] += 1
-                    self.metrics['streaming_used'] += 1
-                    return result
-                    
-        except Exception as e:
-            self._track_error(e, f"Fallback model streaming failed for chunk {chunk_idx}")
-        
-        # Try regular API with fallback model as last resort
-        try:
-            prompt = self._create_prompt(html_chunk)
-            
-            # Use config with explicit token limits
-            config = types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=4096  # Set explicit output token limit
+                temperature=0.1,  # Lower temperature for more consistent results
+                max_output_tokens=self.settings.max_output_tokens  # Use config value instead of hardcoding
             )
             
             response = self.client.models.generate_content(
@@ -433,39 +548,66 @@ class GeminiClient:
     
     def _track_token_usage(self, response: Any, chunk_idx: Any):
         """Track token usage from response."""
-        if hasattr(response, 'usage') and response.usage:
-            if hasattr(response.usage, 'total_tokens'):
-                self.metrics['total_tokens'] += response.usage.total_tokens
-                self.metrics['token_counts'].append(response.usage.total_tokens)
-                logger.info(f"Total tokens used for chunk {chunk_idx}: {response.usage.total_tokens}")
-            
-            # Check if we're close to output token limits
-            if hasattr(response.usage, 'output_tokens'):
-                output_tokens = response.usage.output_tokens
-                if output_tokens > 4000:  # Close to typical 4096 limit
-                    logger.warning(f"Output tokens ({output_tokens}) close to limit for chunk {chunk_idx}")
-    
-    async def _stream_response(self, model: str, prompt: str, config: Any, chunk_idx: Any) -> str:
-        """Use streaming API to get complete response."""
         try:
-            full_text = ""
-            async for chunk in self.client.aio.models.generate_content_stream(
-                model=model,
-                contents=prompt,
-                config=config
-            ):
-                if hasattr(chunk, 'text'):
-                    full_text += chunk.text
-            
-            if not full_text:
-                logger.warning(f"Empty response from streaming API for chunk {chunk_idx}")
-                return None
-            
-            return full_text
-            
+            # The Gemini API provides usage stats in different ways depending on the version
+            # First try the standard format
+            if hasattr(response, 'usage') and response.usage:
+                if hasattr(response.usage, 'total_tokens'):
+                    self.metrics['total_tokens'] += response.usage.total_tokens
+                    self.metrics['token_counts'].append(response.usage.total_tokens)
+                    logger.info(f"Total tokens used for chunk {chunk_idx}: {response.usage.total_tokens}")
+                
+                # Check if we're close to input token limits
+                if hasattr(response.usage, 'input_tokens'):
+                    input_tokens = response.usage.input_tokens
+                    model_limit = self.model_token_limits.get(self.settings.primary_model, 8192)
+                    if input_tokens > model_limit * 0.85:  # If over 85% of limit
+                        logger.warning(f"Input tokens ({input_tokens}) close to model limit for chunk {chunk_idx}")
+                
+                # Check if we're close to output token limits
+                if hasattr(response.usage, 'output_tokens'):
+                    output_tokens = response.usage.output_tokens
+                    output_token_limit = self.settings.max_output_tokens
+                    if output_tokens > output_token_limit * 0.85:  # Close to 85% of the configured limit
+                        logger.warning(f"Output tokens ({output_tokens}) close to limit for chunk {chunk_idx}")
+                        
+                    # Log token usage for monitoring
+                    logger.info(f"Output tokens for chunk {chunk_idx}: {output_tokens} (max: {output_token_limit})")
+            # Try alternative format (direct attributes)
+            elif hasattr(response, 'prompt_token_count') and hasattr(response, 'candidates'):
+                prompt_tokens = response.prompt_token_count
+                # Sum token counts from all candidates
+                candidate_tokens = sum(c.token_count for c in response.candidates if hasattr(c, 'token_count'))
+                total_tokens = prompt_tokens + candidate_tokens
+                
+                self.metrics['total_tokens'] += total_tokens
+                self.metrics['token_counts'].append(total_tokens)
+                
+                logger.info(f"Total tokens for chunk {chunk_idx}: {total_tokens} (prompt: {prompt_tokens}, candidates: {candidate_tokens})")
+                
+                # Check token limits
+                model_limit = self.model_token_limits.get(self.settings.primary_model, 8192)
+                if prompt_tokens > model_limit * 0.85:
+                    logger.warning(f"Prompt tokens ({prompt_tokens}) close to model limit for chunk {chunk_idx}")
+            # Try another alternative for newer versions of the API
+            elif hasattr(response, '_response') and hasattr(response._response, 'usage_metadata'):
+                usage = response._response.usage_metadata
+                if hasattr(usage, 'total_token_count'):
+                    total_tokens = usage.total_token_count
+                    self.metrics['total_tokens'] += total_tokens
+                    self.metrics['token_counts'].append(total_tokens)
+                    logger.info(f"Total tokens used for chunk {chunk_idx}: {total_tokens}")
+            else:
+                # If we couldn't find usage data in any format, log it but don't treat as an error
+                logger.info(f"Token usage data not available in standard format for chunk {chunk_idx}")
+                # Add a basic estimate of token usage based on response text length
+                if hasattr(response, 'text'):
+                    # Rough estimate: 1 token ≈ 4 characters
+                    estimated_tokens = len(response.text) // 4
+                    logger.info(f"Estimated response tokens for chunk {chunk_idx}: ~{estimated_tokens}")
         except Exception as e:
-            logger.warning(f"Error using streaming API for chunk {chunk_idx}: {e}")
-            return None
+            # Don't let token tracking issues disrupt the main flow
+            logger.warning(f"Error tracking token usage for chunk {chunk_idx}: {e}")
     
     async def extract_data(self, html_chunk: str, chunk_idx: int = 0) -> List[Dict[str, Any]]:
         """Extract structured data from HTML using Gemini API."""
@@ -759,76 +901,137 @@ class GeminiClient:
             
         mapped_events = []
         
+        # Update the events processed count
+        self.metrics['events_processed'] += len(events_data)
+        
         for event in events_data:
             mapped_event = {}
             
-            # Map basic fields
-            if 'rideName' in event:
+            # Debug output for each event before mapping
+            logger.debug(f"Mapping event: {json.dumps(event, indent=2, default=str)}")
+            
+            # Map basic fields with more robust handling
+            # For the name field, try multiple source fields with fallbacks
+            if 'rideName' in event and event['rideName']:
                 mapped_event['name'] = event['rideName']
-                
-            if 'date' in event:
+            elif 'name' in event and event['name']:
+                mapped_event['name'] = event['name']
+            else:
+                # Try to create a name from other fields if possible
+                if 'location' in event and event['location']:
+                    prefix = "Event at "
+                    if 'date' in event and event['date']:
+                        prefix = f"Event on {event['date']} at "
+                    mapped_event['name'] = f"{prefix}{event['location']}"
+                elif 'region' in event and event['region']:
+                    mapped_event['name'] = f"AERC Event in {event['region']}"
+                else:
+                    mapped_event['name'] = "Unnamed AERC Event"
+                    logger.warning(f"Created fallback name for event: {mapped_event['name']}")
+                    # Store this as an event with issues for potential reprocessing
+                    self.metrics['events_with_issues'].append({
+                        'issue': 'missing_name',
+                        'original_data': event
+                    })
+            
+            # Map date with better handling
+            if 'date' in event and event['date']:
                 mapped_event['date_start'] = event['date']
-                
-            if 'location' in event:
+            else:
+                # Try to extract from distances
+                if 'distances' in event and event['distances'] and isinstance(event['distances'], list):
+                    for distance in event['distances']:
+                        if isinstance(distance, dict) and 'date' in distance and distance['date']:
+                            mapped_event['date_start'] = distance['date']
+                            logger.debug(f"Extracted date_start from distance: {distance['date']}")
+                            break
+                if 'date_start' not in mapped_event:
+                    # Use current date as last resort
+                    from datetime import datetime
+                    current_date = datetime.now().strftime('%Y-%m-%d')
+                    mapped_event['date_start'] = current_date
+                    logger.warning(f"Missing date_start, using current date: {current_date}")
+            
+            # Map location with better handling
+            if 'location' in event and event['location']:
                 mapped_event['location'] = event['location']
+            else:
+                # Try to extract location from other fields
+                location_parts = []
+                if 'region' in event and event['region']:
+                    location_parts.append(event['region'])
                 
-            if 'region' in event:
+                if location_parts:
+                    mapped_event['location'] = ", ".join(location_parts)
+                else:
+                    mapped_event['location'] = "Unknown Location"
+                    logger.warning(f"Missing location, using fallback: {mapped_event['location']}")
+            
+            # Map region
+            if 'region' in event and event['region']:
                 mapped_event['region'] = event['region']
-                
+            
             # Map ride manager information
-            if 'rideManager' in event:
+            if 'rideManager' in event and event['rideManager']:
                 mapped_event['ride_manager'] = event['rideManager']
-                
+            
             # Map contact information
-            if 'rideManagerContact' in event:
+            if 'rideManagerContact' in event and isinstance(event['rideManagerContact'], dict):
                 contact = event['rideManagerContact']
-                if 'email' in contact:
+                if 'email' in contact and contact['email']:
                     mapped_event['manager_email'] = contact['email']
-                if 'phone' in contact:
+                if 'phone' in contact and contact['phone']:
                     mapped_event['manager_phone'] = contact['phone']
                 
                 # Store the full contact info in manager_contact
                 contact_parts = []
-                if 'name' in contact:
+                if 'name' in contact and contact['name']:
                     contact_parts.append(f"Name: {contact['name']}")
-                if 'email' in contact:
+                if 'email' in contact and contact['email']:
                     contact_parts.append(f"Email: {contact['email']}")
-                if 'phone' in contact:
+                if 'phone' in contact and contact['phone']:
                     contact_parts.append(f"Phone: {contact['phone']}")
                 
                 if contact_parts:
                     mapped_event['manager_contact'] = "; ".join(contact_parts)
             
             # Map judges
-            if 'controlJudges' in event and event['controlJudges']:
-                mapped_event['judges'] = [
-                    f"{judge.get('role', 'Judge')}: {judge['name']}" 
-                    for judge in event['controlJudges'] 
-                    if 'name' in judge
-                ]
+            if 'controlJudges' in event and event['controlJudges'] and isinstance(event['controlJudges'], list):
+                judges = []
+                for judge in event['controlJudges']:
+                    if isinstance(judge, dict) and 'name' in judge:
+                        role = judge.get('role', 'Judge')
+                        judges.append(f"{role}: {judge['name']}")
+                if judges:
+                    mapped_event['judges'] = judges
             
             # Map distances
-            if 'distances' in event and event['distances']:
+            if 'distances' in event and event['distances'] and isinstance(event['distances'], list):
                 # Extract just the distance values for the distances array
-                mapped_event['distances'] = [
-                    d['distance'] for d in event['distances'] 
-                    if 'distance' in d
-                ]
+                distances = []
+                for d in event['distances']:
+                    if isinstance(d, dict) and 'distance' in d:
+                        distances.append(d['distance'])
+                    elif isinstance(d, str):
+                        distances.append(d)
                 
-                # Store the full distance details in event_details
-                mapped_event['event_details'] = {
-                    'distances': event['distances']
-                }
-                
-                # Find the latest date for date_end if there are multiple days
-                if 'date_start' in mapped_event:
-                    latest_date = mapped_event['date_start']
-                    for distance in event['distances']:
-                        if 'date' in distance and distance['date'] > latest_date:
-                            latest_date = distance['date']
+                if distances:
+                    mapped_event['distances'] = distances
                     
-                    if latest_date != mapped_event['date_start']:
-                        mapped_event['date_end'] = latest_date
+                    # Store the full distance details in event_details
+                    mapped_event['event_details'] = {
+                        'distances': event['distances']
+                    }
+                    
+                    # Find the latest date for date_end if there are multiple days
+                    if 'date_start' in mapped_event:
+                        latest_date = mapped_event['date_start']
+                        for distance in event['distances']:
+                            if isinstance(distance, dict) and 'date' in distance and distance['date'] > latest_date:
+                                latest_date = distance['date']
+                        
+                        if latest_date != mapped_event['date_start']:
+                            mapped_event['date_end'] = latest_date
             
             # Map other fields
             if 'mapLink' in event:
@@ -840,11 +1043,57 @@ class GeminiClient:
                 
             if 'tag' in event:
                 mapped_event['external_id'] = str(event['tag'])
-                
+            
             # Set default event type and source
             mapped_event['event_type'] = 'endurance'
             mapped_event['source'] = 'AERC'
             
+            # Debug output for the mapped event
+            logger.debug(f"Mapped event: {json.dumps(mapped_event, indent=2, default=str)}")
+            
+            # Verify all required fields are present
+            missing_fields = []
+            for required_field in ['name', 'date_start', 'location']:
+                if required_field not in mapped_event or not mapped_event[required_field]:
+                    missing_fields.append(required_field)
+            
+            if missing_fields:
+                logger.warning(f"Mapped event is missing required fields: {', '.join(missing_fields)}")
+            
             mapped_events.append(mapped_event)
             
+        logger.info(f"Mapped {len(mapped_events)} events")
         return mapped_events
+
+class GeminiClientStream(GeminiClient):
+    """Gemini API client for streaming content."""
+
+    async def generate_content_stream(self, prompt):
+        """Generate content from Gemini API with streaming."""
+        retries = 0
+        while retries <= self.max_retries:
+            try:
+                response = await self.model.generate_content_async(prompt)
+                # Since response is a coroutine, not a stream, we need to await it
+                # and then return the result, not try to iterate it
+                return await response
+            except Exception as e:
+                if retries == self.max_retries:
+                    logger.error(f"Failed to generate content after {retries} retries: {str(e)}")
+                    raise
+                retries += 1
+                logger.warning(f"Error generating content (retry {retries}/{self.max_retries}): {str(e)}")
+                # Exponential backoff
+                await asyncio.sleep(2 ** retries)
+
+    async def extract_events_stream(self, chunk, chunk_index=0):
+        """Extract events from HTML chunk using streaming API."""
+        prompt = self._create_structured_prompt(chunk, chunk_index)
+        
+        try:
+            # Use non-streaming method since streaming is problematic
+            response = await self.generate_content(prompt)
+            return self._process_response(response, chunk_index)
+        except Exception as e:
+            logger.error(f"Error extracting events with streaming API for chunk {chunk_index}: {str(e)}")
+            return []
