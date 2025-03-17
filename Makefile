@@ -7,7 +7,7 @@
 DOCKER_COMPOSE := docker-compose
 PROJECT_NAME := trailblaze
 
-.PHONY: help build up down restart status logs test test-api test-unit test-integration test-scraper check-db clean docs version check-env health setup-local
+.PHONY: help build up down restart status logs test test-api test-unit test-integration test-scraper check-db clean docs version check-env health setup-local setup-test-db clean-test-db test-sequential
 
 # Colors for terminal output
 GREEN := \033[0;32m
@@ -57,8 +57,29 @@ shell-%: ## Open a shell in a specific service (e.g. make shell-api)
 db-shell: ## Open a PostgreSQL shell
 	$(DOCKER_COMPOSE) exec db psql -U postgres -d $(PROJECT_NAME)
 
+# Clean Test Database
+clean-test-db: ## Clean all data from the test database
+	@echo "${BLUE}Cleaning test database...${NC}"
+	$(DOCKER_COMPOSE) up -d test-db
+	@echo "Waiting for test database to be ready..."
+	@sleep 5
+	@echo "Cleaning test database tables..."
+	$(DOCKER_COMPOSE) run --rm \
+		-e PYTHONPATH=/app \
+		test python -m scripts.testing.clean_test_db
+	@echo "${GREEN}Test database cleaned!${NC}"
+
+# Setup Test Database
+setup-test-db: clean-test-db ## Create tables in the test database
+	@echo "${BLUE}Setting up test database...${NC}"
+	@echo "Creating tables in test database..."
+	$(DOCKER_COMPOSE) run --rm \
+		-e PYTHONPATH=/app \
+		test python -m scripts.testing.create_tables
+	@echo "${GREEN}Test database setup complete!${NC}"
+
 # Testing Commands
-test: ## Run all tests
+test: setup-test-db ## Run all tests
 	$(DOCKER_COMPOSE) down
 	$(DOCKER_COMPOSE) build test test-db
 	$(DOCKER_COMPOSE) run --rm \
@@ -71,22 +92,36 @@ test: ## Run all tests
 		test pytest
 	$(DOCKER_COMPOSE) down
 
-test-api: ## Run API tests against running services
-	$(DOCKER_COMPOSE) exec api python test_api.py
+test-sequential: ## Run tests sequentially to avoid event loop issues
+	@echo "${BLUE}Running tests sequentially...${NC}"
+	python -m scripts.testing.run_tests_sequentially
 
-test-unit: ## Run unit tests only
+test-api: ## Run API tests against running services
+	$(DOCKER_COMPOSE) exec api python -m scripts.testing.test_api
+
+test-unit: setup-test-db ## Run unit tests only
 	$(DOCKER_COMPOSE) run --rm \
 		-e PYTHONPATH=/app \
 		-e LOG_LEVEL=DEBUG \
 		test pytest tests/api
-	
-test-integration: ## Run integration tests only
+
+test-dev: setup-test-db ## Run tests in development mode without rebuilding
+	$(DOCKER_COMPOSE) run --rm \
+		-e PYTHONPATH=/app \
+		-e AERC_GEMINI_API_KEY=test_key \
+		-e AERC_DEBUG_MODE=true \
+		-e AERC_REFRESH_CACHE=true \
+		-e AERC_VALIDATE=true \
+		-e LOG_LEVEL=DEBUG \
+		test pytest $(PYTEST_ARGS)
+
+test-integration: setup-test-db ## Run integration tests only
 	$(DOCKER_COMPOSE) run --rm \
 		-e PYTHONPATH=/app \
 		-e LOG_LEVEL=DEBUG \
 		test pytest tests/integration
 
-test-scraper: ## Run scraper tests
+test-scraper: setup-test-db ## Run scraper tests
 	$(DOCKER_COMPOSE) run --rm \
 		-e PYTHONPATH=/app \
 		-e AERC_GEMINI_API_KEY=test_key \
@@ -133,7 +168,7 @@ setup-dev: ## Set up development environment (in container)
 	@echo "${GREEN}Development dependencies installed${NC}"
 
 # CI Commands
-ci-test: ## Run tests for CI environment
+ci-test: setup-test-db ## Run tests for CI environment
 	$(DOCKER_COMPOSE) -f docker-compose.yml build test test-db
 	$(DOCKER_COMPOSE) -f docker-compose.yml run --rm \
 		-e PYTHONPATH=/app \

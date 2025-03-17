@@ -36,7 +36,8 @@ async def test_ask_question_with_event(client: TestClient, db_session: AsyncSess
         location="Test Location",
         date_start=datetime.now(),
         region="Pacific Northwest",
-        description="A test ride for testing"
+        description="A test ride for testing",
+        source="TEST"
     )
     
     db_event = await create_event(db_session, event)
