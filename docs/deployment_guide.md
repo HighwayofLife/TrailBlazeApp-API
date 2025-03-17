@@ -1,326 +1,205 @@
 # Deployment Guide
 
-### Additional Environment Variables
+## Quick Start
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| PORT | Port for the API server | 8000 | No |
-| CORS_ORIGINS | Comma-separated list of allowed origins | * | No |
-| SECRET_KEY | Secret key for token encryption | None | Yes (if auth enabled) |
-| SCRAPER_SCHEDULE | Cron expression for scraper schedule | 0 0 * * * | No |
+```bash
+# Build production images
+make build-prod
+
+# Deploy to production
+make deploy
+
+# View production logs
+make logs-prod
+```
+
+## Environment Setup
+
+### Required Variables
+
+```bash
+# API Server
+API_HOST=api.trailblaze.app
+API_PORT=443
+API_DEBUG=false
+
+# Database
+DB_HOST=db.trailblaze.app
+DB_NAME=trailblaze_prod
+DB_USER=trailblaze
+DB_PASSWORD=secure_password
+
+# Redis
+REDIS_HOST=redis.trailblaze.app
+REDIS_PORT=6379
+
+# Security
+SECRET_KEY=your_secure_key
+ALLOWED_ORIGINS=https://trailblaze.app
+```
 
 ### Managing Secrets
 
-For production deployments, use secure methods for managing secrets:
+1. Create `.env.prod`:
+```bash
+make create-env-prod
+```
 
-- **Azure**: Use Azure Key Vault
-- **AWS**: Use AWS Secrets Manager
-- **GCP**: Use Google Secret Manager
+2. Update secrets:
+```bash
+make update-secrets
+```
 
-Never commit secrets to the repository.
+## Database Management
 
-## Database Migration in Production
-
-Before deploying an update that includes database schema changes:
-
-1. **Create and test migrations locally:**
+### Migrations
 
 ```bash
-alembic revision --autogenerate -m "Description of changes"
-alembic upgrade head
+# Create migration
+make create-migration msg="Add user table"
+
+# Backup database
+make backup-db
+
+# Apply migrations
+make migrate-prod
 ```
 
-2. **Backup the production database:**
+### Backups
 
 ```bash
-pg_dump -U username -d trailblaze > backup.sql
+# Create backup
+make backup-db
+
+# List backups
+make list-backups
+
+# Restore from backup
+make restore-db backup=backup_2024_03_21.sql
 ```
 
-3. **Apply migrations in production:**
+## Deployment Steps
+
+1. Build production images:
+```bash
+make build-prod
+```
+
+2. Run pre-deployment checks:
+```bash
+make pre-deploy-check
+```
+
+3. Deploy:
+```bash
+make deploy
+```
+
+4. Verify deployment:
+```bash
+make verify-deploy
+```
+
+## Monitoring
+
+### Logs
 
 ```bash
-# When using Docker
-docker-compose exec api alembic upgrade head
+# View all logs
+make logs-prod
 
-# When using Kubernetes
-kubectl exec -it <pod-name> -- alembic upgrade head
-
-# When using cloud services
-# Use the appropriate command or console to run migrations
+# View specific service
+make logs-api
+make logs-db
+make logs-redis
 ```
 
-4. **Verify the migration was successful:**
+### Health Checks
 
 ```bash
-# When using Docker
-docker-compose exec api alembic current
+# Check all services
+make health-check
 
-# When using Kubernetes
-kubectl exec -it <pod-name> -- alembic current
+# Check specific service
+make health-api
+make health-db
+make health-redis
 ```
 
-### Using the Makefile for Deployment Tasks
+## Maintenance
 
-The project includes a Makefile that simplifies many deployment and maintenance tasks. Here are some useful commands for deployment:
+### Common Tasks
 
 ```bash
-# Build all containers
-make build
+# Restart services
+make restart-prod
 
-# Start all services in detached mode
-make up
+# Update dependencies
+make update-deps
 
-# Check the status of services
-make status
-
-# View logs from all containers
-make logs
-
-# Check health of all services
-make health
-
-# Backup the database
-make db-backup
-
-# Restore the database from a backup file
-make db-restore FILE=backup_20230101_120000.sql
-
-# Run database migrations
-make migrate
-
-# Stop all services
-make down
-
-# Clean up containers and volumes
-make clean
-
-# Remove all containers, volumes, and images
-make purge
+# Clear cache
+make clear-cache
 ```
 
-For a complete list of available commands, run:
+### Scaling
 
 ```bash
-make help
+# Scale API servers
+make scale-api replicas=3
+
+# Scale workers
+make scale-workers replicas=2
 ```
-
-## Continuous Deployment
-
-### GitHub Actions Workflow
-
-Create a `.github/workflows/deploy.yml` file:
-
-```yaml
-name: Deploy
-
-on:
-  push:
-    branches: [ main ]
-    
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:14
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          
-    steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    - name: Run tests
-      run: |
-        pytest
-      env:
-        DATABASE_URL: postgresql://postgres:postgres@localhost/test_db
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    
-    # Add deployment steps based on your platform
-    # Example for Azure:
-    - name: Azure login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-        
-    - name: Build and push to ACR
-      uses: azure/docker-login@v1
-      with:
-        login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-        username: ${{ secrets.REGISTRY_USERNAME }}
-        password: ${{ secrets.REGISTRY_PASSWORD }}
-    
-    - run: |
-        docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/trailblaze-api:${{ github.sha }} .
-        docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/trailblaze-api:${{ github.sha }}
-        
-    - name: Deploy to Azure Container Apps
-      uses: azure/CLI@v1
-      with:
-        inlineScript: |
-          az containerapp update \
-            --name trailblaze-api \
-            --resource-group trailblaze \
-            --image ${{ secrets.REGISTRY_LOGIN_SERVER }}/trailblaze-api:${{ github.sha }}
-```
-
-## Security Considerations
-
-### Security Best Practices
-
-1. **TLS/SSL**: Always use HTTPS in production
-2. **API Key Management**: Securely store and rotate API keys
-3. **Network Security**:
-   - Use private networks when possible
-   - Implement proper firewall rules
-   - Use VPC/VNET for cloud deployments
-4. **Container Security**:
-   - Use minimal base images
-   - Scan images for vulnerabilities
-   - Run containers as non-root users
-
-### Setting Up HTTPS
-
-1. **Using Nginx as a Reverse Proxy:**
-
-```nginx
-server {
-    listen 80;
-    server_name api.trailblazeapp.com;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name api.trailblazeapp.com;
-    
-    ssl_certificate /etc/letsencrypt/live/api.trailblazeapp.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.trailblazeapp.com/privkey.pem;
-    
-    location / {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-2. **Using Let's Encrypt for SSL Certificates:**
-
-```bash
-# Install certbot
-apt-get update
-apt-get install certbot python3-certbot-nginx
-
-# Obtain certificate
-certbot --nginx -d api.trailblazeapp.com
-```
-
-## Monitoring and Logging
-
-### Logging Configuration
-
-Configure logging in your production environment:
-
-```bash
-# Set environment variables
-LOG_LEVEL=INFO
-LOG_FORMAT=json
-```
-
-### Monitoring Tools
-
-1. **Prometheus and Grafana**:
-   - Install Prometheus for metrics collection
-   - Set up Grafana dashboards for visualization
-
-2. **Cloud Provider Monitoring**:
-   - Azure: Application Insights
-   - AWS: CloudWatch
-   - GCP: Cloud Monitoring
-
-### Alerting
-
-Set up alerts for:
-- High error rates
-- Elevated response times
-- Low disk space
-- High CPU usage
 
 ## Rollback Procedures
 
-### Rolling Back a Deployment
-
-1. **Docker Compose Rollback:**
-
+1. Revert to previous version:
 ```bash
-# Tag your images with version numbers
-docker-compose down
-docker-compose -f docker-compose.yml -f docker-compose.previous.yml up -d
+make rollback
 ```
 
-2. **Kubernetes Rollback:**
-
+2. Verify rollback:
 ```bash
-kubectl rollout undo deployment/trailblaze-api
+make verify-deploy
 ```
 
-3. **Cloud Service Rollback:**
-
+3. Monitor logs:
 ```bash
-# Azure Container Apps
-az containerapp revision list --name trailblaze-api --resource-group trailblaze
-az containerapp revision activate --name trailblaze-api --resource-group trailblaze --revision previous-revision-name
-
-# AWS ECS
-aws ecs update-service --cluster trailblaze --service trailblaze-api --task-definition previous-task-definition
-
-# Google Cloud Run
-gcloud run services update-traffic trailblaze-api --to-revisions=previous-revision=100
+make logs-prod
 ```
 
-### Database Rollback
+## Troubleshooting
 
-If a migration fails:
+### Common Issues
 
-1. **Roll back to the previous migration:**
-
+1. Database connection:
 ```bash
-alembic downgrade -1
+make check-db-connection
 ```
 
-2. **Restore from backup if necessary:**
-
+2. Redis connection:
 ```bash
-psql -U username -d trailblaze < backup.sql
+make check-redis-connection
 ```
 
-Ensure that the following services are running:
-- `db`: PostgreSQL database
-- `api`: FastAPI application
-- `scraper`: Scraper service
-- `manage`: Management tasks
+3. API health:
+```bash
+make health-api
+```
+
+### Emergency Procedures
+
+1. Stop all services:
+```bash
+make stop-prod
+```
+
+2. Start essential services:
+```bash
+make start-essential
+```
+
+3. Restore from backup:
+```bash
+make restore-db backup=latest
+```

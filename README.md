@@ -31,9 +31,9 @@ TrailBlazeApp-API is the backend service that powers the TrailBlaze mobile appli
 
 - Python 3.9+ 
 - Docker and Docker Compose (for containerized setup)
-- PostgreSQL (if running locally)
+- Make (for using Makefile commands)
 
-### Local Development
+### Setup and Development
 
 ```bash
 # Clone the repository
@@ -44,53 +44,50 @@ cd TrailBlazeApp-API
 cp .env.example .env
 # Edit .env with your configuration
 
-# Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Local Development (with Docker)
+make build      # Build all containers
+make up         # Start all services
+make logs       # View logs
 
-# Install dependencies
-pip install -r requirements.txt
+# Local Development (without Docker)
+make setup-local  # Set up Python environment
+make migrate      # Run database migrations
+make docs         # Generate API documentation
 
-# Run database migrations
-alembic upgrade head
+# Testing
+make test       # Run all tests
+make test-api   # Run API tests only
 
-# Start the development server
-uvicorn app.main:app --reload
+# Maintenance
+make health     # Check service health
+make db-backup  # Backup database
 ```
 
 Visit [http://localhost:8000/docs](http://localhost:8000/docs) to view the interactive API documentation.
 
-### Docker Setup
+### Common Makefile Commands
 
 ```bash
-docker-compose up -d
-```
-
-### Using the Makefile
-
-The project includes a comprehensive Makefile that simplifies common development, testing, and deployment tasks:
-
-```bash
-# View all available commands
+# View all available commands and descriptions
 make help
 
-# Build and start all services
-make build
-make up
+# Development
+make up         # Start services
+make down       # Stop services
+make restart    # Restart services
+make logs       # View logs
 
-# View logs
-make logs
+# Database
+make db-shell   # Open database shell
+make migrate    # Run migrations
 
-# Run tests
-make test
-
-# Stop services
-make down
+# Testing
+make test       # Run all tests
+make lint       # Run linters
+make format     # Format code
 ```
 
 For a complete list of Makefile commands and their descriptions, see the [Development Guide](docs/development_guide.md).
-
-Visit [http://localhost:8000/docs](http://localhost:8000/docs) to view the interactive API documentation.
 
 ## Documentation
 
@@ -108,9 +105,12 @@ For detailed documentation, please see the [docs folder](docs/README.md):
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature-name`
-3. Commit your changes: `git commit -am 'Add feature'`
-4. Push to the branch: `git push origin feature-name`
-5. Submit a pull request
+3. Make your changes
+4. Commit your changes: `git commit` (uses our commit message template)
+5. Push to the branch: `git push origin feature-name`
+6. Submit a pull request
+
+See the [Development Guide](docs/development_guide.md) for our commit message format and coding standards.
 
 ## License
 

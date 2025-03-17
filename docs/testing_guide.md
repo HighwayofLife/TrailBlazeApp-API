@@ -55,158 +55,75 @@ tests/
 
 ## Running Tests
 
-### Running Tests Locally
-
-To run the full test suite:
-
-```bash
-pytest
-```
-
-To run specific test categories:
-
-```bash
-# Run unit tests only
-pytest tests/unit/
-
-# Run API tests only
-pytest tests/api/
-
-# Run scraper tests only
-pytest tests/scrapers/
-```
-
-To run a specific test file:
-
-```bash
-pytest tests/api/v1/test_events.py
-```
-
-To run a specific test:
-
-```bash
-pytest tests/api/v1/test_events.py::test_get_event_by_id
-```
-
-### Using the Makefile for Testing
-
-The project includes a Makefile that simplifies running tests. Here are the main testing commands:
+### Quick Start
 
 ```bash
 # Run all tests
 make test
 
-# Run API tests only
-make test-api
+# Run specific test suites
+make test-unit        # Unit tests only
+make test-api         # API tests only
+make test-integration # Integration tests
+make test-scraper    # Scraper tests
 
-# Run unit tests only
-make test-unit
-
-# Run integration tests only
-make test-integration
-
-# Run scraper tests only
-make test-scraper
-
-# Run tests for CI environment
-make ci-test
+# Run tests with coverage
+make test            # Includes coverage report
 ```
 
-These commands will set up the necessary environment, including test databases, and run the tests in Docker containers to ensure a consistent testing environment.
+### Test Categories
 
-### Running Tests in Docker
+| Command | Description |
+|---------|-------------|
+| `make test` | Run all tests with coverage |
+| `make test-unit` | Run unit tests |
+| `make test-api` | Run API endpoint tests |
+| `make test-integration` | Run integration tests |
+| `make test-scraper` | Run scraper tests |
+| `make ci-test` | Run tests for CI environment |
 
-```bash
-# Run all tests
-pytest
+### Test Environment
 
-# Run with coverage report
-pytest --cov=app --cov-report=term --cov-report=html
-```
-
-### Running Specific Test Categories
-
-```bash
-# Run only unit tests
-pytest -m unit
-
-# Run only integration tests
-pytest -m integration
-
-# Run scraper tests with coverage
-./tests/run_scraper_tests.sh
-
-# Run scraper integration tests
-./tests/run_scraper_tests.sh --integration
-```
-
-### Test Markers
-
-Available pytest markers:
-- `asyncio`: Mark a test as an async test
-- `integration`: Mark a test as an integration test
-- `unit`: Mark a test as a unit test
+Tests run in a containerized environment to ensure consistency. The test containers include:
+- PostgreSQL test database
+- Redis for caching
+- Mock external services
 
 ## Writing Tests
 
-### Unit Test Example
+### Directory Structure
 
+```
+tests/
+├── conftest.py        # Shared fixtures
+├── unit/             # Unit tests
+├── api/              # API tests
+└── scrapers/         # Scraper tests
+```
+
+### Test Examples
+
+1. Unit Test:
 ```python
 @pytest.mark.unit
 async def test_create_event(db_session):
-    event_data = EventCreate(
-        name="Test Event",
-        date_start=datetime.now(),
-        location="Test Location"
-    )
-    event = await events.create_event(db_session, event_data)
-    assert event.name == "Test Event"
+    event = await create_event(db_session, test_data)
+    assert event.name == test_data["name"]
 ```
 
-### Integration Test Example
-
+2. API Test:
 ```python
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_full_scraper_workflow(scraper, mock_db, test_html):
-    with patch('scrapers.aerc_scraper.network.NetworkHandler.make_request') as mock_request:
-        mock_request.return_value = test_html
-        result = await scraper.run(mock_db)
-        assert result['status'] == 'success'
+@pytest.mark.api
+async def test_get_events(client):
+    response = await client.get("/v1/events")
+    assert response.status_code == 200
 ```
-
-### Test Fixtures
-
-Common test fixtures are in `tests/conftest.py`. Specialized fixtures for scrapers are in `tests/scrapers/aerc_scraper/conftest.py`.
-
-Key fixtures include:
-- `db_session`: Provides test database session
-- `async_client`: Configured test client
-- `mock_db`: Mock database for scraper tests
-- `test_html`: Sample HTML for scraper tests
-- `sample_events`: Sample event data
 
 ## Test Coverage
 
-Our coverage requirements:
-- Minimum 80% overall coverage
-- 90%+ for critical components (auth, data validation, scrapers)
-- 100% for business logic and data models
-
-Coverage is checked during CI/CD and tracked in the `/coverage` directory.
-
-## Mocking External Dependencies
-
-We use pytest's monkeypatch and unittest.mock for mocking:
-
-```python
-@pytest.fixture
-def scraper(settings, mock_session):
-    """Create scraper with mocked components."""
-    with patch('scrapers.aerc_scraper.main.NetworkHandler') as mock_network:
-        mock_network.return_value.fetch_calendar = AsyncMock()
-        yield scraper
-```
+Coverage reports are generated automatically with `make test`. View the report in:
+- Terminal output
+- `coverage/` directory (HTML report)
 
 ## Continuous Integration
 
@@ -215,7 +132,7 @@ Tests run automatically on:
 - Pushes to main branch
 - Daily scheduled runs
 
-Failed tests block merging until fixed.
+Use `make ci-test` to run tests as they would run in CI.
 
 ## Performance Testing
 

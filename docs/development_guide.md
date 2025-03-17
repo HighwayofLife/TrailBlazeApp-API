@@ -11,19 +11,14 @@ This document provides comprehensive instructions for developers working on the 
   - [Table of Contents](#table-of-contents)
   - [Development Environment Setup](#development-environment-setup)
     - [Prerequisites](#prerequisites)
-    - [Local Development](#local-development)
-    - [Docker Setup](#docker-setup)
+    - [Initial Setup](#initial-setup)
+    - [Development Workflow](#development-workflow)
   - [Project Structure](#project-structure)
   - [Code Style and Standards](#code-style-and-standards)
-    - [Recommended Tools](#recommended-tools)
-  - [Development Workflow](#development-workflow)
   - [Adding New Features](#adding-new-features)
-  - [Database Migrations](#database-migrations)
+  - [Database Management](#database-management)
   - [Working with the Gemini API](#working-with-the-gemini-api)
   - [Common Development Tasks](#common-development-tasks)
-    - [Adding a New Endpoint](#adding-a-new-endpoint)
-    - [Adding a New Scraper](#adding-a-new-scraper)
-    - [Debugging Tips](#debugging-tips)
 
 ## Development Environment Setup
 
@@ -31,110 +26,102 @@ This document provides comprehensive instructions for developers working on the 
 
 - Python 3.9+
 - Git
-- Docker and Docker Compose (optional, for containerized development)
-- PostgreSQL (if running locally)
+- Docker and Docker Compose
+- Make
 
-### Local Development
+### Initial Setup
 
+1. Clone the repository:
 ```bash
-# Clone the repository
 git clone https://github.com/highwayoflife/TrailBlazeApp-API.git
 cd TrailBlazeApp-API
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your configuration
-
-# Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run database migrations
-alembic upgrade head
-
-# Start the development server
-uvicorn app.main:app --reload
 ```
 
-Visit [http://localhost:8000/docs](http://localhost:8000/docs) to view the interactive API documentation.
-
-### Docker Setup
-
+2. Set up environment:
 ```bash
-docker-compose up -d
+cp .env.example .env   # Copy environment template
+# Edit .env with your configuration
 ```
 
-Ensure that the following services are running:
-- `db`: PostgreSQL database
-- `api`: FastAPI application
-- `scraper`: Scraper service
-- `manage`: Management tasks
+3. Choose your development mode:
 
-### Using the Makefile
+**With Docker (recommended):**
+```bash
+make build            # Build containers
+make up              # Start services
+make logs            # View logs
+```
 
-The project includes a comprehensive Makefile that simplifies common development tasks. To see all available commands:
+**Without Docker:**
+```bash
+make setup-local     # Set up Python environment
+make migrate         # Run migrations
+```
 
+### Development Workflow
+
+The project uses a Makefile to standardize common tasks. View all commands with:
 ```bash
 make help
 ```
 
-#### Common Makefile Commands
+#### Core Development Commands
 
-| Command | Description |
-|---------|-------------|
-| `make build` | Build all Docker containers |
-| `make up` | Start all services |
-| `make down` | Stop all services |
-| `make restart` | Restart all services |
-| `make logs` | View logs from all containers |
-| `make logs-api` | View logs from the API service |
-| `make shell-api` | Open a shell in the API container |
-| `make db-shell` | Open a PostgreSQL shell |
-| `make test` | Run all tests |
-| `make test-api` | Run API tests only |
-| `make test-unit` | Run unit tests only |
-| `make test-integration` | Run integration tests only |
-| `make test-scraper` | Run scraper tests only |
-| `make migrate` | Run database migrations |
-| `make migrate-create MSG="message"` | Create a new migration |
-| `make scraper-aerc_calendar` | Run a specific scraper |
-| `make docs` | Generate API documentation |
-| `make lint` | Run linters (flake8, mypy) |
-| `make format` | Format code with black and isort |
-| `make health` | Check health of services |
-| `make db-backup` | Backup database to file |
-| `make db-restore FILE=backup.sql` | Restore database from file |
+| Category | Command | Description |
+|----------|---------|-------------|
+| **Services** |
+| | `make up` | Start all services |
+| | `make down` | Stop all services |
+| | `make restart` | Restart all services |
+| | `make logs` | View all logs |
+| | `make logs-api` | View API logs |
+| **Development** |
+| | `make format` | Format code (black, isort) |
+| | `make lint` | Run linters |
+| | `make docs` | Generate API docs |
+| | `make health` | Check service health |
+| **Database** |
+| | `make migrate` | Run migrations |
+| | `make migrate-create MSG="..."` | Create migration |
+| | `make db-shell` | Open database shell |
+| | `make db-backup` | Backup database |
+| | `make db-restore FILE=backup.sql` | Restore database |
+| **Testing** |
+| | `make test` | Run all tests |
+| | `make test-api` | Run API tests |
+| | `make test-unit` | Run unit tests |
+| | `make test-integration` | Run integration tests |
+| **Scraping** |
+| | `make scraper-aerc_calendar` | Run AERC scraper |
 
-#### Development Workflow with Makefile
+#### Typical Development Cycle
 
-A typical development workflow using the Makefile might look like:
-
+1. Start services:
 ```bash
-# Start the services
 make up
+make logs     # Monitor logs
+```
 
-# View logs
-make logs
+2. Make changes and test:
+```bash
+make format   # Format code
+make lint     # Check style
+make test     # Run tests
+```
 
-# Run tests
-make test
-
-# Format code
-make format
-
-# Check linting
-make lint
-
-# Create a database migration
+3. Database changes:
+```bash
 make migrate-create MSG="add user table"
-
-# Apply migrations
 make migrate
+```
 
-# Stop services when done
+4. Check health:
+```bash
+make health   # Verify services
+```
+
+5. Stop services:
+```bash
 make down
 ```
 
@@ -142,194 +129,101 @@ make down
 
 ```
 TrailBlazeApp-API/
-├── app/                      # Main application package
-│   ├── api/                  # API endpoints
-│   │   ├── openapi/         # OpenAPI schemas
-│   │   └── v1/              # API version 1 endpoints
-│   ├── crud/                 # Database CRUD operations
-│   ├── models/               # SQLAlchemy ORM models
-│   ├── schemas/              # Pydantic schemas
-│   ├── services/             # Business logic services
-│   ├── config.py             # Application configuration
-│   ├── database.py           # Database connection
-│   ├── logging_config.py     # Logging configuration
-│   ├── middleware.py         # FastAPI middleware
-│   └── main.py               # FastAPI application entry point
-├── alembic/                  # Database migrations
-├── docs/                     # Documentation
-├── logs/                     # Application logs
-├── scrapers/                 # Data scraping scripts
-├── tests/                    # Test suite
-├── .dockerignore             # Files to exclude from Docker
-├── .env.example              # Example environment variables
-├── alembic.ini               # Alembic configuration
-├── docker-compose.yml        # Docker Compose configuration
-├── Dockerfile                # Docker configuration
-└── requirements.txt          # Python dependencies
+├── app/                    # Main application
+│   ├── api/               # API endpoints
+│   ├── crud/              # Database operations
+│   ├── models/            # SQLAlchemy models
+│   ├── schemas/           # Pydantic schemas
+│   └── services/          # Business logic
+├── docs/                  # Documentation
+├── scrapers/             # Data scrapers
+├── tests/                # Test suite
+└── Makefile             # Development commands
 ```
 
 ## Code Style and Standards
 
-We follow PEP 8 guidelines for Python code style. Additionally:
-
-- Use 4 spaces for indentation (no tabs)
-- Maximum line length of 88 characters (following Black formatter conventions)
-- Docstrings for all public functions, classes, and methods
-- Type hints for function parameters and return values
-- Descriptive variable and function names
-
-### Recommended Tools
-
-- **Black**: For code formatting
-- **isort**: For import sorting
-- **flake8**: For linting
-- **mypy**: For type checking
-
-You can install these tools with:
+We enforce code style using automated tools:
 
 ```bash
-pip install black isort flake8 mypy
+make format   # Run black and isort
+make lint     # Run flake8 and mypy
 ```
 
-And run them with:
-
-```bash
-black app/ tests/
-isort app/ tests/
-flake8 app/ tests/
-mypy app/
-```
-
-## Development Workflow
-
-We use a feature branch workflow:
-
-1. **Create a feature branch:**
-
-```bash
-git checkout -b feature/your-feature-name
-```
-
-2. **Make changes and commit them:**
-
-```bash
-git add .
-git commit -m "Descriptive commit message"
-```
-
-3. **Push your branch and create a pull request:**
-
-```bash
-git push origin feature/your-feature-name
-```
-
-4. **Code review and merge:**
-   - Have at least one team member review your code
-   - Make any requested changes
-   - Once approved, merge into the main branch
+Standards:
+- PEP 8 guidelines
+- 88 character line length (Black)
+- Type hints required
+- Docstrings for public interfaces
 
 ## Adding New Features
 
-When adding a new feature to the API:
-
-1. **Update the API specification:**
-   - Define new endpoints in the appropriate OpenAPI file in `app/api/openapi/`
-   - Validate the specification using an OpenAPI validator
-
-2. **Create Pydantic models:**
-   - Define request and response models in `app/schemas/`
-   - Include validation rules and examples
-
-3. **Create or update database models:**
-   - Define SQLAlchemy models in `app/models/`
-   - Create migrations if needed
-
-4. **Implement CRUD operations:**
-   - Add necessary functions in `app/crud/`
-
-5. **Implement business logic:**
-   - Add service functions in `app/services/`
-
-6. **Create API endpoints:**
-   - Implement FastAPI routes in `app/api/v1/`
-
-7. **Write tests:**
-   - Unit tests for services and CRUD operations
-   - Integration tests for API endpoints
-
-8. **Update documentation:**
-   - Update relevant documentation files
-
-## Database Migrations
-
-We use Alembic for database migrations:
-
-1. **Create a new migration:**
-
+1. Create feature branch:
 ```bash
-alembic revision --autogenerate -m "Description of the change"
+git checkout -b feature/name
 ```
 
-2. **Apply migrations:**
+2. Implement changes following this order:
+   - Update OpenAPI spec
+   - Add/update models
+   - Implement CRUD
+   - Add endpoints
+   - Write tests
 
+3. Verify changes:
 ```bash
-alembic upgrade head
+make format
+make lint
+make test
+make docs
 ```
 
-3. **Downgrade if needed:**
+4. Commit changes:
+```bash
+git add .
+git commit    # Uses our template
+```
+
+## Database Management
+
+Database operations are managed through the Makefile:
 
 ```bash
-alembic downgrade -1  # Go back one revision
+make migrate-create MSG="..."  # Create migration
+make migrate                   # Apply migrations
+make db-backup                # Backup database
+make db-restore FILE=...      # Restore backup
+make db-shell                 # Open psql shell
 ```
 
 ## Working with the Gemini API
 
-The application integrates with Google's Gemini API for AI-powered Q&A. Here's how to work with it:
+1. Add your API key to `.env`:
+```
+GEMINI_API_KEY=your_key_here
+```
 
-1. **Get an API key:**
-   - Sign up for Google AI Platform
-   - Create a project and generate an API key
-   - Add it to your `.env` file as `GEMINI_API_KEY`
-
-2. **Use the service in your code:**
-
+2. Use the AI service:
 ```python
 from app.services.ai_service import ask_question
 
 async def get_answer(question: str) -> str:
-    context = "Information about endurance riding events"
-    return await ask_question(question, context)
+    return await ask_question(question)
 ```
-
-3. **Testing with mock responses:**
-   - For tests, use the mock implementation in `tests/mocks/ai_service.py`
 
 ## Common Development Tasks
 
 ### Adding a New Endpoint
 
-1. Define the endpoint in the appropriate file in `app/api/v1/`
-2. Create any needed schemas in `app/schemas/`
-3. Implement business logic in `app/services/`
+1. Define endpoint in `app/api/v1/`
+2. Add schemas in `app/schemas/`
+3. Implement logic in `app/services/`
 4. Add tests in `tests/api/`
+5. Update OpenAPI documentation
 
 ### Adding a New Scraper
 
-1. Create a new scraper in the `scrapers/` directory
-2. Implement the scraper logic using Scrapy or Beautiful Soup
-3. Add the scraper to the scheduler in `scrapers/run_scrapers.py`
-4. Add tests for the scraper in `tests/scrapers/`
-
-### Debugging Tips
-
-1. **Enable debug mode:**
-   - Set `DEBUG=true` in your `.env` file
-   - Set `LOG_LEVEL=DEBUG` for more detailed logs
-
-2. **Use the interactive debugger:**
-   - If using VS Code, use the provided launch configurations
-   - Set breakpoints in your code
-
-3. **Check the logs:**
-   - Application logs are stored in the `logs/` directory
-   - You can also view logs in the console when running with `--reload`
+1. Create scraper in `scrapers/`
+2. Add to scheduler
+3. Add tests in `tests/scrapers/`
+4. Run with `make scraper-name`

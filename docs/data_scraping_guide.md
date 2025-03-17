@@ -1,8 +1,28 @@
 # Data Scraping Guide
 
-## Overview
+## Running Scrapers
 
-The TrailBlazeApp-API uses a modular scraping system to collect endurance riding event data from various sources. The system is designed for reliability, maintainability, and extensibility.
+### Quick Start
+
+```bash
+# Run AERC calendar scraper
+make scraper-aerc_calendar
+
+# Run scraper tests
+make test-scraper
+```
+
+### Environment Variables
+
+```bash
+# Required
+GEMINI_API_KEY=your_api_key
+
+# Optional
+SCRAPER_DEBUG=true      # Enable debug logging
+SCRAPER_REFRESH=true    # Force cache refresh
+SCRAPER_VALIDATE=true   # Enable validation
+```
 
 ## Architecture
 
@@ -33,225 +53,101 @@ scrapers/
 
 ### Key Components
 
-1. **Scraper Manager**: Coordinates scraper execution
-2. **Base Scraper**: Abstract class defining common interface
-3. **Configuration**: Environment-based settings
-4. **Scheduler**: Async job scheduling
-5. **Individual Scrapers**: Source-specific implementations
+1. **Scraper Manager**: Coordinates execution
+2. **Base Scraper**: Common interface
+3. **Individual Scrapers**: Source implementations
 
 ## AERC Calendar Scraper
 
 ### Features
 
-- Modular architecture with clear separation of concerns
-- Intelligent HTML chunking for large responses
-- AI-powered data extraction using Google's Gemini API
-- Robust error handling and recovery
-- Comprehensive metrics collection
-- Caching with TTL and validation
-- Rate limiting and polite scraping
+- HTML chunking for large responses
+- AI-powered data extraction (Gemini)
+- Error handling and recovery
+- Metrics collection
 
-### Configuration
+### Running the Scraper
 
-```env
-# Required settings
-AERC_GEMINI_API_KEY=your_api_key
-AERC_DATABASE_URL=postgresql://user:pass@host/db
+```bash
+# Run with default settings
+make scraper-aerc_calendar
 
-# Optional settings
-AERC_DEBUG_MODE=true           # Enable debug logging
-AERC_REFRESH_CACHE=false       # Force cache refresh
-AERC_CACHE_TTL=3600           # Cache TTL in seconds
-AERC_REQUESTS_PER_SECOND=1.0   # Rate limiting
+# Run with options (set in .env)
+SCRAPER_DEBUG=true make scraper-aerc_calendar
 ```
 
-### Execution Flow
+### Monitoring
 
-1. Extract season IDs from calendar page
-2. Fetch calendar HTML using season IDs
-3. Clean and preprocess HTML
-4. Split HTML into manageable chunks
-5. Extract structured data using Gemini API
-6. Validate extracted data
-7. Convert to database schema
-8. Store in database with deduplication
+```bash
+# View scraper logs
+make logs-scraper
 
-### Error Handling
-
-- Network errors: Automatic retry with backoff
-- API failures: Fallback to secondary model
-- Validation errors: Detailed error reporting
-- Cache issues: Automatic invalidation
-- Database errors: Transaction rollback
-
-### Cache Management
-
-The scraper implements a sophisticated caching system:
-
-1. **Cache Levels**:
-   - Raw HTML responses
-   - Structured JSON data
-   - Processed event data
-
-2. **Cache Validation**:
-   - TTL-based expiration
-   - Data consistency checks
-   - Row count validation
-
-3. **Force Refresh Conditions**:
-   - Manual trigger (SCRAPER_REFRESH=true)
-   - Validation failure 
-   - Schedule changes
-   - Data format changes
-
-### Metrics Collection
-
-Comprehensive metrics are collected from all components:
-
-- Network: requests, retries, errors
-- HTML: rows found, cleaning time
-- API: calls, success rate, latency
-- Validation: events found/valid/invalid
-- Cache: hits, misses, invalidations
-- Database: inserts, updates, conflicts
-- Performance: memory usage, duration
+# Check scraper health
+make health
+```
 
 ## Adding New Scrapers
 
-1. Create new module:
+1. Create scraper module:
 ```
-scrapers/
-└── new_scraper/
-    ├── __init__.py
-    ├── scraper.py
-    ├── config.py
-    └── ...
+scrapers/new_scraper/
+├── __init__.py
+├── scraper.py
+└── config.py
 ```
 
-2. Implement BaseScraper interface:
+2. Implement BaseScraper:
 ```python
 class NewScraper(BaseScraper):
-    async def run(self, db: AsyncSession) -> Dict[str, Any]:
+    async def run(self):
         # Implementation
-        pass
 ```
 
-3. Register in ScraperManager:
-```python
-SCRAPERS = {
-    "aerc_calendar": AERCScraper,
-    "new_source": NewScraper
-}
-```
-
-4. Add configuration:
-```python
-class NewScraperSettings(ScraperBaseSettings):
-    base_url: str
-    update_frequency: int
-    # etc.
-```
-
-5. Create tests:
-```
-tests/scrapers/new_scraper/
-├── conftest.py
-├── test_scraper.py
-└── fixtures/
-```
-
-## Running Scrapers
-
-### Using the Makefile
-
-The project includes a Makefile that simplifies running scrapers. Here are the main scraper commands:
-
+3. Add tests:
 ```bash
-# Run a specific scraper (e.g., AERC calendar scraper)
-make scraper-aerc_calendar
+# Create tests
+touch tests/scrapers/new_scraper/test_scraper.py
 
-# Run tests for scrapers
+# Run tests
 make test-scraper
 ```
 
-These commands will set up the necessary environment and run the scrapers in Docker containers to ensure a consistent environment.
-
-#### Manual Execution
-
+4. Run scraper:
 ```bash
-# Run all scrapers
-python -m scrapers.run_scrapers
-
-# Run specific scraper
-python -m scrapers.run_scrapers aerc_calendar
-
-# Run with options
-python -m scrapers.run_scrapers aerc_calendar \
-    --refresh-cache \
-    --debug \
-    --validate
-```
-
-### Scheduled Execution
-
-The ScraperScheduler handles automated runs:
-
-```python
-scheduler = ScraperScheduler()
-
-# Daily at midnight
-scheduler.schedule_scraper(
-    scraper_func=run_aerc_scraper,
-    name="aerc_daily",
-    cron="0 0 * * *"
-)
-
-# Weekly on Monday
-scheduler.schedule_scraper(
-    scraper_func=run_pner_scraper,
-    name="pner_weekly",
-    cron="0 0 * * 1"
-)
+make scraper-new_scraper
 ```
 
 ## Maintenance
 
-### Daily Tasks
-- Monitor scraper logs
-- Check event counts
-- Verify data quality
+### Common Tasks
 
-### Weekly Tasks
-- Review error patterns
-- Check source websites
-- Update cached data
+```bash
+# Check scraper logs
+make logs-scraper
 
-### Monthly Tasks
-- Analyze performance metrics
-- Review/adjust schedules
-- Update documentation
+# Run scraper tests
+make test-scraper
 
-## Troubleshooting
+# Validate scraper output
+SCRAPER_VALIDATE=true make scraper-aerc_calendar
 
-### Common Issues
+# Clear cache and rerun
+SCRAPER_REFRESH=true make scraper-aerc_calendar
+```
 
-1. **Scraper Failures**:
-   - Check source website accessibility
-   - Verify HTML structure hasn't changed
-   - Review error logs
-   - Clear cache and retry
+### Troubleshooting
 
-2. **API Issues**:
-   - Verify API key validity
-   - Check rate limits
-   - Review model configuration
+1. Check logs:
+```bash
+make logs-scraper
+```
 
-3. **Cache Issues**:
-   - Clear specific cache: `rm cache/aerc_*.json`
-   - Force refresh: `SCRAPER_REFRESH=true`
-   - Check cache validation logs
+2. Run with debug:
+```bash
+SCRAPER_DEBUG=true make scraper-aerc_calendar
+```
 
-4. **Database Issues**:
-   - Check connection
-   - Verify schema compatibility
-   - Review transaction logs
+3. Validate data:
+```bash
+SCRAPER_VALIDATE=true make scraper-aerc_calendar
+```
