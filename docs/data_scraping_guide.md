@@ -151,3 +151,67 @@ SCRAPER_DEBUG=true make scraper-aerc_calendar
 ```bash
 SCRAPER_VALIDATE=true make scraper-aerc_calendar
 ```
+
+## Database Queries
+
+### Checking Event Counts
+
+```bash
+# Open database shell
+make db-shell
+
+# Once in the PostgreSQL shell, you can run queries:
+# Count all AERC events
+SELECT COUNT(*) FROM events WHERE source = 'AERC';
+
+# Count events by status
+SELECT is_canceled, COUNT(*) 
+FROM events 
+WHERE source = 'AERC' 
+GROUP BY is_canceled;
+
+# Count events by date range
+SELECT COUNT(*) 
+FROM events 
+WHERE source = 'AERC' 
+AND date_start >= '2024-01-01' 
+AND date_start < '2025-01-01';
+
+# View recent events
+SELECT name, date_start, location, is_canceled 
+FROM events 
+WHERE source = 'AERC' 
+ORDER BY date_start DESC 
+LIMIT 5;
+```
+
+### Common Queries
+
+```sql
+-- Find duplicate events
+SELECT name, date_start, COUNT(*) 
+FROM events 
+WHERE source = 'AERC' 
+GROUP BY name, date_start 
+HAVING COUNT(*) > 1;
+
+-- Check for missing required fields
+SELECT name, date_start, location 
+FROM events 
+WHERE source = 'AERC' 
+AND (name IS NULL OR date_start IS NULL OR location IS NULL);
+
+-- View events with specific criteria
+SELECT name, date_start, location, is_canceled 
+FROM events 
+WHERE source = 'AERC' 
+AND name ILIKE '%cancelled%';
+```
+
+### Troubleshooting Tips
+
+1. Always verify event counts directly in the database
+2. Check for duplicate entries if numbers don't match
+3. Look for missing required fields
+4. Verify date ranges and event statuses
+5. Use the database shell for direct inspection
