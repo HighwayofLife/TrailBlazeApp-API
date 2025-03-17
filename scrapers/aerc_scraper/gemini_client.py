@@ -12,8 +12,10 @@ from google import genai
 from google.genai import types
 from .config import get_settings  # Changed from ..config import get_scraper_settings
 from ..exceptions import AIError, DataExtractionError
+from app.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+# Use the properly configured logger from app.logging_config
+logger = get_logger("scrapers.aerc_scraper.gemini")
 
 class GeminiClient:
     """Client for interacting with Google's Gemini API."""
@@ -218,62 +220,69 @@ class GeminiClient:
             if len(rows) > 5:  # If we have a table structure
                 logger.info(f"Using table row chunking strategy for {len(rows)} rows")
                 current_chunk = ""
-                current_rows = []
+                chunk_rows = []
+                max_rows_per_chunk = 50  # Adjust based on typical row size
                 
-                for row in rows:
-                    row_html = str(row)
-                    # If adding this row would exceed limit, finish the current chunk
-                    if len(current_chunk) + len(row_html) > self.max_html_chunk_size and current_chunk:
-                        # Create proper HTML structure for the chunk
-                        table_html = f'<table>{current_chunk}</table>'
-                        chunks.append(table_html)
-                        current_chunk = row_html
-                        current_rows = [row]
-                    else:
-                        current_chunk += row_html
-                        current_rows.append(row)
+                for i, row in enumerate(rows):
+                    chunk_rows.append(str(row))
+                    
+                    if len(chunk_rows) >= max_rows_per_chunk or i == len(rows) - 1:
+                        # Create a chunk with a proper HTML structure
+                        chunk_html = f"<table>{''.join(chunk_rows)}</table>"
+                        chunks.append(chunk_html)
+                        logger.info(f"Created chunk with {len(chunk_rows)} table rows ({len(chunk_html)} bytes)")
+                        chunk_rows = []
                 
-                if current_chunk:
-                    # Create proper HTML structure for the final chunk
-                    table_html = f'<table>{current_chunk}</table>'
-                    chunks.append(table_html)
-                
+                logger.info(f"Created {len(chunks)} chunks using table row strategy")
                 return chunks
             
-            # If no table rows, try divs
-            divs = soup.find_all('div', class_=lambda c: c and ('event' in c.lower() or 'ride' in c.lower() or 'calendar' in c.lower()))
-            if len(divs) > 3:
-                logger.info(f"Using div chunking strategy for {len(divs)} divs")
-                current_chunk = ""
-                current_divs = []
+            # If no table structure, try divs with event-related classes
+            event_divs = soup.find_all('div', class_=lambda c: c and any(keyword in c.lower() for keyword in ['event', 'ride', 'calendar', 'calendarRow']))
+            if len(event_divs) > 0:
+                logger.info(f"Using div chunking strategy for {len(event_divs)} divs")
                 
-                for div in divs:
-                    div_html = str(div)
-                    # If adding this div would exceed limit, finish the current chunk
-                    if len(current_chunk) + len(div_html) > self.max_html_chunk_size and current_chunk:
-                        # Create proper HTML structure for the chunk
-                        container_html = f'<div class="events-container">{current_chunk}</div>'
-                        chunks.append(container_html)
-                        current_chunk = div_html
-                        current_divs = [div]
-                    else:
-                        current_chunk += div_html
-                        current_divs.append(div)
+                current_chunk = []
+                current_chunk_size = 0
+                max_chunk_size = self.max_html_chunk_size
                 
+                for i, div in enumerate(event_divs):
+                    div_str = str(div)
+                    div_size = len(div_str)
+                    
+                    # Check if adding this div would exceed the chunk size
+                    if current_chunk_size + div_size > max_chunk_size and current_chunk:
+                        # Create a chunk with all the collected divs
+                        chunk_html = f"<div class='event-container'>{''.join(current_chunk)}</div>"
+                        chunks.append(chunk_html)
+                        logger.info(f"Created chunk with {len(current_chunk)} event divs ({len(chunk_html)} bytes)")
+                        current_chunk = []
+                        current_chunk_size = 0
+                    
+                    current_chunk.append(div_str)
+                    current_chunk_size += div_size
+                
+                # Add the last chunk if there's anything left
                 if current_chunk:
-                    # Create proper HTML structure for the final chunk
-                    container_html = f'<div class="events-container">{current_chunk}</div>'
-                    chunks.append(container_html)
+                    chunk_html = f"<div class='event-container'>{''.join(current_chunk)}</div>"
+                    chunks.append(chunk_html)
+                    logger.info(f"Created final chunk with {len(current_chunk)} event divs ({len(chunk_html)} bytes)")
                 
+                logger.info(f"Created {len(chunks)} chunks using div chunking strategy")
                 return chunks
-            
-            # If no clear event containers, try to split by common closing tags
-            return self._split_by_tag_boundaries(html)
+                
+            # No clear event containers, try to split by common closing tags
+            logger.info("No table rows or event divs found, using tag boundary chunking")
+            chunks = self._split_by_tag_boundaries(html)
+            logger.info(f"Created {len(chunks)} chunks using tag boundary strategy")
+            return chunks
             
         except Exception as e:
             logger.warning(f"Error parsing HTML with BeautifulSoup: {e}")
             # Fallback to tag-boundary splitting
-            return self._split_by_tag_boundaries(html)
+            logger.info("Falling back to tag boundary chunking due to parsing error")
+            chunks = self._split_by_tag_boundaries(html)
+            logger.info(f"Created {len(chunks)} chunks using tag boundary fallback strategy")
+            return chunks
     
     def _count_event_elements(self, soup) -> int:
         """Count the number of event elements in the HTML."""
@@ -283,14 +292,16 @@ class GeminiClient:
         # First try to find elements with the class 'calendarRow' which is commonly used in AERC
         calendar_rows = soup.find_all('div', class_='calendarRow')
         if calendar_rows:
-            logger.info(f"Found {len(calendar_rows)} calendar rows")
-            return len(calendar_rows)
+            event_count = len(calendar_rows)
+            logger.info(f"🔍 EVENTS FOUND: {event_count} calendar rows")
+            return event_count
         
         # Try table rows with specific classes or containing event info
         rows = soup.find_all('tr', class_=lambda c: c and any(keyword in c.lower() for keyword in ['event', 'ride', 'calendar']))
         if rows:
-            logger.info(f"Found {len(rows)} table rows with event-related classes")
-            return len(rows)
+            event_count = len(rows)
+            logger.info(f"🔍 EVENTS FOUND: {event_count} table rows with event-related classes")
+            return event_count
         
         # Try any table rows that might contain event data
         all_rows = soup.find_all('tr')
@@ -307,30 +318,34 @@ class GeminiClient:
                     event_rows.append(row)
             
             if event_rows:
-                logger.info(f"Found {len(event_rows)} table rows with date/location patterns")
-                return len(event_rows)
+                event_count = len(event_rows)
+                logger.info(f"🔍 EVENTS FOUND: {event_count} table rows with date/location patterns")
+                return event_count
         
         # Try div elements with event-related classes
         divs = soup.find_all('div', class_=lambda c: c and any(keyword in c.lower() for keyword in ['event', 'ride', 'calendar']))
         if divs:
-            logger.info(f"Found {len(divs)} divs with event-related classes")
-            return len(divs)
+            event_count = len(divs)
+            logger.info(f"🔍 EVENTS FOUND: {event_count} divs with event-related classes")
+            return event_count
         
         # Try list items that might contain events
         list_items = soup.find_all('li', class_=lambda c: c and any(keyword in c.lower() for keyword in ['event', 'ride', 'calendar']))
         if list_items:
-            logger.info(f"Found {len(list_items)} list items with event-related classes")
-            return len(list_items)
+            event_count = len(list_items)
+            logger.info(f"🔍 EVENTS FOUND: {event_count} list items with event-related classes")
+            return event_count
         
         # If we can't find specific event elements, estimate based on common patterns in the whole text
         # Check for date patterns in text
         text = soup.get_text()
         date_patterns = re.findall(r'\b\d{1,2}/\d{1,2}/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b', text)
         if date_patterns:
-            logger.info(f"Found {len(date_patterns)} date patterns in text")
-            return len(date_patterns)
+            event_count = len(date_patterns)
+            logger.info(f"🔍 EVENTS FOUND: {event_count} date patterns in text")
+            return event_count
         
-        logger.warning("Could not estimate event count, defaulting to 0")
+        logger.warning("⚠️ NO EVENTS FOUND IN HTML CHUNK - could not detect any recognizable event elements")
         return event_count  # Return 0 if we couldn't identify events
     
     def _split_by_tag_boundaries(self, html: str) -> List[str]:
@@ -614,6 +629,9 @@ class GeminiClient:
         self.metrics['calls'] += 1
         self.metrics['chunks_processed'] += 1
         
+        # Log chunk processing start at INFO level
+        logger.info(f"Processing chunk {chunk_idx} (size: {len(html_chunk)} bytes)")
+        
         # Check if input is too large and needs to be split
         input_tokens = await self.count_tokens(html_chunk, self.settings.primary_model)
         if input_tokens > 0:
@@ -632,9 +650,13 @@ class GeminiClient:
                 all_results = []
                 for i, sub_chunk in enumerate(html_chunks):
                     try:
+                        logger.info(f"Processing sub-chunk {chunk_idx}.{i} (size: {len(sub_chunk)} bytes)")
                         sub_results = await self._process_html_chunk(sub_chunk, f"{chunk_idx}.{i}")
                         if sub_results:
+                            logger.info(f"Extracted {len(sub_results)} events from sub-chunk {chunk_idx}.{i}")
                             all_results.extend(sub_results)
+                        else:
+                            logger.warning(f"No events extracted from sub-chunk {chunk_idx}.{i}")
                     except Exception as e:
                         logger.error(f"Error processing sub-chunk {chunk_idx}.{i}: {e}")
                         # Continue with other chunks even if one fails
@@ -642,6 +664,7 @@ class GeminiClient:
                 if all_results:
                     # Map fields to match database schema
                     mapped_results = self._map_fields(all_results)
+                    logger.info(f"Extracted and mapped a total of {len(mapped_results)} events from chunk {chunk_idx}")
                     return mapped_results
                 else:
                     raise AIError("Gemini", f"Failed to extract data from all sub-chunks of chunk {chunk_idx}")
@@ -649,13 +672,16 @@ class GeminiClient:
         # If not too large, process directly
         try:
             results = await self._process_html_chunk(html_chunk, chunk_idx)
-            # Map fields to match database schema
-            mapped_results = self._map_fields(results)
-            return mapped_results
+            if results:
+                # Map fields to match database schema
+                mapped_results = self._map_fields(results)
+                logger.info(f"Extracted and mapped {len(mapped_results)} events from chunk {chunk_idx}")
+                return mapped_results
+            else:
+                raise AIError("Gemini", f"No data extracted from chunk {chunk_idx}")
         except Exception as e:
-            if isinstance(e, AIError):
-                raise
-            raise AIError("Gemini", f"Data extraction failed: {str(e)}")
+            logger.error(f"Error processing chunk {chunk_idx}: {str(e)}")
+            raise AIError("Gemini", f"Failed to extract data from chunk {chunk_idx}: {str(e)}")
     
     def _process_structured_response(self, response: Any, chunk_idx: Any) -> Optional[List[Dict[str, Any]]]:
         """Process structured response from Gemini API."""
@@ -934,6 +960,28 @@ class GeminiClient:
                         'original_data': event
                     })
             
+            # Check for cancelled events by examining the name field
+            # Default is not cancelled
+            mapped_event['is_canceled'] = False
+            
+            # Get the name for cancelled check
+            event_name = mapped_event.get('name', '')
+            
+            # Check for various cancelled indicators in the name
+            cancel_indicators = ['**cancelled**', '** cancelled **', '**canceled**', '** canceled **', 
+                               'cancelled', 'canceled', 'event cancelled', 'event canceled']
+            
+            # Case-insensitive search for cancel keywords
+            if any(indicator.lower() in event_name.lower() for indicator in cancel_indicators):
+                mapped_event['is_canceled'] = True
+                logger.info(f"Detected cancelled event: {event_name}")
+                
+                # Log this for metrics
+                self.metrics['events_with_issues'].append({
+                    'issue': 'cancelled_event',
+                    'event_name': event_name
+                })
+            
             # Map date with better handling
             if 'date' in event and event['date']:
                 mapped_event['date_start'] = event['date']
@@ -1092,7 +1140,7 @@ class GeminiClientStream(GeminiClient):
         
         try:
             # Use non-streaming method since streaming is problematic
-            response = await self.generate_content(prompt)
+            response = await self.generate_content_stream(prompt)
             return self._process_response(response, chunk_index)
         except Exception as e:
             logger.error(f"Error extracting events with streaming API for chunk {chunk_index}: {str(e)}")

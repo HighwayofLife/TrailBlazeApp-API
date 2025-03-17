@@ -44,6 +44,7 @@ class EventBase(BaseModel):
     event_type: Optional[str] = None 
     event_details: Optional[Dict[str, Any]] = None  # For semi-structured data
     notes: Optional[str] = None
+    is_canceled: Optional[bool] = False  # Added is_canceled field with default False
     source: str  # Required field to identify the data source
 
 class EventCreate(EventBase):
@@ -62,6 +63,18 @@ class EventUpdate(BaseModel):
     flyer_url: Optional[str] = None
     region: Optional[str] = None
     distances: Optional[List[str]] = None
+    ride_manager: Optional[str] = None
+    manager_email: Optional[str] = None
+    manager_phone: Optional[str] = None
+    judges: Optional[List[str]] = None
+    directions: Optional[str] = None
+    map_link: Optional[str] = None
+    external_id: Optional[str] = None
+    manager_contact: Optional[str] = None
+    event_type: Optional[str] = None
+    event_details: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+    is_canceled: Optional[bool] = None  # Added to allow updating canceled status
 
 class EventResponse(EventBase):
     """Schema for event response."""

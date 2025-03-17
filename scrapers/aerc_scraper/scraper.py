@@ -23,8 +23,10 @@ from .database import DatabaseHandler
 from .cache import Cache
 from .metrics import ScraperMetrics
 from .exceptions import ScraperError
+from app.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+# Use the properly configured logger from app.logging_config
+logger = get_logger("scrapers.aerc_scraper")
 
 class AERCScraper(BaseScraper):
     """Enhanced AERC calendar scraper with modular architecture."""
@@ -175,12 +177,34 @@ class AERCScraper(BaseScraper):
             # 4. Extract structured data using Gemini
             logger.info("Extracting structured data")
             chunks = self._chunk_html(cleaned_html)
+            
+            # Count approximate events in the HTML
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(cleaned_html, 'lxml')
+            event_count = self.gemini_client._count_event_elements(soup)
+            self.gemini_client.metrics['events_found'] = event_count
+            
+            # Log chunk information prominently
+            logger.info("")
+            logger.info("="*80)
+            logger.info("                          SCRAPER PROCESSING STATS                       ")
+            logger.info("="*80)
+            logger.info(f"🔎 TOTAL EVENTS DETECTED IN HTML:        {event_count}")
+            logger.info(f"📦 HTML SPLIT INTO CHUNKS:               {len(chunks)}")
+            logger.info(f"📊 AVERAGE EVENTS PER CHUNK:             {event_count / len(chunks) if len(chunks) > 0 else 0:.1f}")
+            logger.info("-"*80)
+            logger.info("")
+            
             all_events = []
             
             for idx, chunk in enumerate(chunks):
+                logger.info(f"Processing chunk {idx+1}/{len(chunks)} (size: {len(chunk)} bytes)")
                 events = await self.gemini_client.extract_data(chunk, idx)
                 if events:
                     all_events.extend(events)
+                    logger.info(f"✅ Chunk {idx+1}: Extracted {len(events)} events")
+                else:
+                    logger.warning(f"⚠️ Chunk {idx+1}: No events extracted!")
             
             if not all_events:
                 raise ScraperError("Failed to extract structured data")
@@ -356,18 +380,25 @@ class AERCScraper(BaseScraper):
         db_count = await self._get_db_event_count(db)
         
         # Log verification results with more visibility
-        logger.info("="*50)
-        logger.info("              EVENT COUNT VERIFICATION              ")
-        logger.info("="*50)
-        logger.info(f"Events found in HTML (estimated): {events_found}")
-        logger.info(f"Events extracted by Gemini: {events_extracted}")
-        logger.info(f"Events after validation: {events_valid}")
-        logger.info(f"Events prepared for database: {events_db_processed}")
-        logger.info(f"Events added to database: {events_added}")
-        logger.info(f"Events updated in database: {events_updated}")
-        logger.info(f"Events skipped (duplicates): {events_skipped}")
-        logger.info(f"Total AERC events in database: {db_count}")
-        logger.info("-"*50)
+        logger.info("")
+        logger.info("="*80)
+        logger.info("                          EVENT COUNT VERIFICATION                          ")
+        logger.info("="*80)
+        logger.info(f"🔍 EVENTS FOUND IN HTML (ESTIMATED):      {events_found}")
+        logger.info(f"📊 EVENTS EXTRACTED BY GEMINI:           {events_extracted}")
+        logger.info(f"✅ EVENTS AFTER VALIDATION:              {events_valid}")
+        logger.info(f"🏗️  EVENTS PREPARED FOR DATABASE:         {events_db_processed}")
+        logger.info(f"➕ EVENTS ADDED TO DATABASE:             {events_added}")
+        logger.info(f"🔄 EVENTS UPDATED IN DATABASE:           {events_updated}")
+        logger.info(f"⏭️  EVENTS SKIPPED (DUPLICATES):          {events_skipped}")
+        logger.info(f"💾 TOTAL AERC EVENTS IN DATABASE:        {db_count}")
+        
+        # Add cancelled events count if available
+        cancelled_count = sum(1 for event in db_events if getattr(event, 'is_canceled', False))
+        if cancelled_count > 0:
+            logger.info(f"❌ CANCELLED EVENTS DETECTED:           {cancelled_count}")
+            
+        logger.info("-"*80)
         
         # Calculate discrepancies
         extraction_loss = events_found - events_extracted if events_found > 0 else 0
@@ -417,7 +448,7 @@ class AERCScraper(BaseScraper):
                     logger.warning(f"Low capture rate: {percent_captured:.2f}%. Check validation and database insertion.")
         
         # Add a summary line for metrics
-        logger.info("="*50)
+        logger.info("="*80)
         # Add this info to the metrics
         self.metrics.update({
             'verification': {

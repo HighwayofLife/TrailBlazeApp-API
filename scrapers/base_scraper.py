@@ -5,6 +5,7 @@ import logging
 from typing import Dict, List, Any
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.logging_config import get_logger
 
 class BaseScraper(abc.ABC):
     """Abstract base class for all scrapers."""
@@ -12,7 +13,7 @@ class BaseScraper(abc.ABC):
     def __init__(self, source_name: str, logger=None):
         """Initialize base scraper."""
         self.source_name = source_name
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(f"scrapers.{source_name.lower().replace(' ', '_')}")
         self.start_time = datetime.now()
     
     @abc.abstractmethod

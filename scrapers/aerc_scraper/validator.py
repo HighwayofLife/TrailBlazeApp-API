@@ -7,11 +7,13 @@ import os
 from typing import List, Dict, Any
 from datetime import datetime
 from pydantic import ValidationError
+from app.logging_config import get_logger
 
 from ..schema import AERCEvent, EventSourceEnum, EventTypeEnum, validate_event
 from ..exceptions import ValidationError as ScraperValidationError
 
-logger = logging.getLogger(__name__)
+# Use the properly configured logger from app.logging_config
+logger = get_logger("scrapers.aerc_scraper.validator")
 
 class DataValidator:
     """Validates extracted event data."""
