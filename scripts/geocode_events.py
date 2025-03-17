@@ -3,7 +3,7 @@
 Script to geocode existing events in the database.
 
 This script adds latitude and longitude coordinates to events 
-that don't have them by using the geocoding service.
+that don't have them by using the geocoding enrichment service.
 
 Usage:
     docker-compose run --rm api python -m scripts.geocode_events
@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session
 from app.models import Event
-from app.services.geocoding import GeocodingService
+from app.services.enrichment import GeocodingEnrichmentService
 
 # Configure logging
 logging.basicConfig(
@@ -38,7 +38,7 @@ async def geocode_events(batch_size: int = 50, limit: Optional[int] = None) -> N
         batch_size: Number of events to process in each batch
         limit: Optional limit on total number of events to process
     """
-    service = GeocodingService()
+    service = GeocodingEnrichmentService()
     total_processed = 0
     total_geocoded = 0
     
@@ -82,7 +82,7 @@ async def geocode_events(batch_size: int = 50, limit: Optional[int] = None) -> N
             
             # Process each event in the batch
             for event in events:
-                success = await service.geocode_event(event)
+                success = await service.enrich_event(event)
                 total_processed += 1
                 
                 if success:
