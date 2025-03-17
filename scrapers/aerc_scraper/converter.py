@@ -29,7 +29,13 @@ class DataConverter:
                     distances = [d.get('distance') for d in event['distances'] if d.get('distance')]
                 
                 # Get event start and end date
-                date_start = datetime.strptime(event.get('date'), "%Y-%m-%d") if event.get('date') else None
+                date_start = None
+                if event.get('date'):
+                    if isinstance(event['date'], datetime):
+                        date_start = event['date']
+                    else:
+                        date_start = datetime.strptime(event['date'], "%Y-%m-%d")
+                
                 date_end = date_start
                 
                 # If multiple days, find the latest date
@@ -37,8 +43,13 @@ class DataConverter:
                     for distance in event['distances']:
                         if distance.get('date'):
                             try:
-                                distance_date = datetime.strptime(distance['date'], '%Y-%m-%d')
-                                if distance_date > date_end:
+                                distance_date = None
+                                if isinstance(distance['date'], datetime):
+                                    distance_date = distance['date']
+                                else:
+                                    distance_date = datetime.strptime(distance['date'], '%Y-%m-%d')
+                                
+                                if distance_date and (date_end is None or distance_date > date_end):
                                     date_end = distance_date
                             except ValueError:
                                 continue

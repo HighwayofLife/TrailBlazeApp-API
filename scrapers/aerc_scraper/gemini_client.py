@@ -45,7 +45,7 @@ class GeminiClient:
         self.max_input_tokens = 4000  # Conservative limit to leave room for output
         
         # Maximum HTML size per chunk (characters)
-        self.max_html_chunk_size = 10000
+        self.max_html_chunk_size = 7500  # Reduced to 75% of original 10000 to avoid excessive chunking
     
     def _create_prompt(self, chunk: str) -> str:
         """Create a prompt for Gemini models."""

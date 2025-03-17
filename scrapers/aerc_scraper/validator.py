@@ -1,6 +1,9 @@
 """AERC event data validation module."""
 
 import logging
+import json
+import sys
+import os
 from typing import List, Dict, Any
 from datetime import datetime
 from pydantic import ValidationError
@@ -13,13 +16,15 @@ logger = logging.getLogger(__name__)
 class DataValidator:
     """Validates extracted event data."""
     
-    def __init__(self):
+    def __init__(self, debug_mode=False, exit_on_first_error=False):
         """Initialize validator."""
         self.metrics = {
             'validated': 0,
             'invalid': 0,
             'validation_time': 0.0
         }
+        self.debug_mode = debug_mode or os.environ.get('SCRAPER_DEBUG', '').lower() == 'true'
+        self.exit_on_first_error = exit_on_first_error or os.environ.get('SCRAPER_EXIT_ON_ERROR', '').lower() == 'true'
     
     def validate_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Validate extracted event data."""
@@ -64,7 +69,18 @@ class DataValidator:
                 
             except (ValidationError, ValueError, ScraperValidationError) as e:
                 self.metrics['invalid'] += 1
-                logger.error(f"Validation error for event {event_data.get('name', 'Unknown')}: {str(e)}")
+                error_msg = f"Validation error for event {event_data.get('name', 'Unknown')}: {str(e)}"
+                logger.error(error_msg)
+                
+                # Print the JSON blob for debugging if in debug mode
+                if self.debug_mode:
+                    logger.debug(f"JSON blob with validation error: {json.dumps(event_data, indent=2, default=str)}")
+                
+                # Exit after first error if configured to do so
+                if self.exit_on_first_error:
+                    logger.error("Exiting after first validation error due to SCRAPER_EXIT_ON_ERROR=true")
+                    sys.exit(1)
+                
                 continue
         
         self.metrics['validation_time'] = (datetime.now() - start_time).total_seconds()
