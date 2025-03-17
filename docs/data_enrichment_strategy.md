@@ -1,145 +1,115 @@
-# Data Enrichment Strategy: Geocoding and Website/Flyer Processing
+# Data Enrichment Strategy: Service-Oriented Post-Process (Final)
 
 ## 1. Introduction
 
-This document outlines the strategy for enriching event data in the TrailBlazeApp API. The primary goal is to enhance the quality and completeness of event information by adding:
+This document outlines the **finalized and refined strategy** for enriching event data in the TrailBlazeApp API, now adopting a **service-oriented post-process** approach. We will use **separate services** for:
 
-*   **Geocoding (GPS Coordinates):**  Latitude and longitude to enable location-based features.
-*   **Website/Flyer Processing:**  Detailed information extracted from event websites and flyers using Gemini AI to enrich event details beyond the basic scraped data.
+*   **Geocoding Service:**  Responsible for adding latitude and longitude to events. This service will be invoked primarily for new events or when event locations are updated.
+*   **Website/Flyer Enrichment Service:** Responsible for fetching website/flyer content and using Gemini AI to extract detailed event information. This service will run regularly to keep event details up-to-date.
 
-We need to decide the optimal timing and approach for these enrichment processes, considering factors like scraper efficiency, maintainability, error handling, and the need for ongoing event updates.
+**Our primary goals remain to:**
 
-## 2. Options for Data Enrichment Timing
+*   **Minimize API Costs:**  Efficiently use geocoding and Gemini APIs, focusing on caching and reliable result saving.
+*   **Maintainability and Scalability:**  Decouple enrichment from scraping and further decouple geocoding from website/flyer processing into separate services for a more robust and scalable architecture.
+*   **Reliability:** Ensure robust error handling and data persistence throughout the enrichment process for both services.
+*   **Efficient Updates:** Implement a strategy for regular website/flyer updates and handle location updates and re-geocoding effectively.
 
-We have considered three main options for when to perform geocoding and website/flyer processing:
+## 2. Chosen Strategy: Service-Oriented Post-Process (Refined Option 1)
 
-### 2.1. Option 1: Combined Post-Process (Recommended)
+We have refined **Option 1: Combined Post-Process** into a **Service-Oriented Post-Process** strategy, which provides a more modular and scalable architecture.
 
 **Description:**
 
-*   **Scraping Phase:** The scraper focuses solely on extracting basic event data (name, location, dates, URLs, flyer URLs) from the source HTML page and stores this initial data in the database.
-*   **Post-Processing Phase:** A single, dedicated post-processing script (`enrich_events.py`) is executed after scraping. This script handles both geocoding and website/flyer processing in a batch manner.
+*   **Scraping Phase:** Scrapers remain focused on extracting basic event data and storing it in the database.
+*   **Post-Processing Services:** We will have **two distinct post-processing services**:
+    *   **Geocoding Service (`geocode_events.py` - Refined):**  This service will be invoked primarily for new events or when an event's location is updated. It will be responsible *only* for geocoding.
+    *   **Website/Flyer Enrichment Service (`enrich_website_flyer.py` - New):** This new service will run regularly on a schedule to fetch website/flyer content and enrich event details using Gemini AI.
 
 **Workflow:**
 
-1.  **Scraper Runs:** Extracts basic event data and saves to the database.
-2.  **`enrich_events.py` Script Runs (Post-Process):**
-    *   Queries the database for events needing enrichment (e.g., missing GPS coordinates or detailed `event_details`).
-    *   Geocodes event locations using the `GeocodingService`.
-    *   Fetches website/flyer content for each event.
-    *   Makes Gemini API calls to extract detailed information from website/flyer content.
-    *   Updates the `event_details` JSONB field and potentially other relevant fields in the `events` table.
-    *   Implements tiered update cadence logic (nightly for events within 3 months, weekly for events further out).
+1.  **Scrapers Run:** Independent scrapers extract basic event data and save it to the database.
+2.  **Geocoding Service (`geocode_events.py` - Refined) - On-Demand or Location Update Trigger:**
+    *   **Triggered on New Event Creation:** When a new event is added to the database without `latitude` or `longitude`, the Geocoding Service is triggered.
+    *   **Triggered on Location Update:** If an event's `location` field is updated, the Geocoding Service is re-triggered for that event.
+    *   **Queries for Events Needing Geocoding:** Selects events from the database that are missing GPS coordinates (i.e., `latitude` or `longitude` is NULL).
+    *   **Geocoding:** Uses the `GeocodingService` to geocode event locations in batches.
+    *   **Data Update and Persistence:** Updates the `latitude` and `longitude` fields in the `events` table. Ensures reliable saving of geocoding results.
+    *   **Caching:** Leverages caching within `GeocodingService` to minimize redundant geocoding API calls.
 
-**Pros:**
+3.  **Website/Flyer Enrichment Service (`enrich_website_flyer.py` - New) - Scheduled Regular Runs:**
+    *   **Scheduled Execution:** This service runs regularly (e.g., nightly) via cron or a scheduler.
+    *   **Queries for Events Needing Website/Flyer Enrichment:** Selects events based on criteria like `event_details` being outdated or needing initial enrichment, and the tiered update cadence logic (nightly/weekly checks based on event date proximity and `last_website_check_at` timestamps).
+    *   **Website/Flyer Processing:** Fetches website/flyer content for selected events.
+    *   **Gemini AI Enrichment:** Makes batched Gemini API calls to extract detailed information from website/flyer content.
+    *   **Data Update and Persistence:** Updates the `event_details` JSONB field and potentially other relevant fields in the `events` table. Ensures reliable saving of Gemini API results.
+    *   **Tiered Update Cadence:** Implements logic for tiered update frequency (nightly for events within 3 months, weekly for events further out), checking `last_website_check_at` timestamps to avoid redundant processing.
+    *   **Caching:** Leverages caching for website/flyer content and potentially Gemini API responses to minimize API calls and improve performance.
 
-*   **Simplified Workflow:** Clear separation of scraping and enrichment, with enrichment consolidated into a single post-processing step.
-*   **Batch Efficiency:** Allows for efficient batch processing of both geocoding and Gemini API calls, optimizing API usage and potentially reducing costs.
-*   **Decoupled Scraping:** The scraper remains lightweight and focused on initial data extraction, making it faster and easier to maintain.
-*   **Centralized Enrichment Logic:** All enrichment logic (geocoding and website/flyer processing) is located in one script, improving maintainability and updates.
-*   **Efficient Update Cadence:**  The post-process script can efficiently implement the tiered update frequency based on event date proximity.
+**Rationale for Choosing Service-Oriented Post-Process:**
 
-**Cons:**
+*   **Cost-Effective API Usage:** Both services prioritize batch processing and aggressive caching to minimize API costs.
+*   **Microservice Architecture Alignment:**  This strategy fully embraces a microservice architecture with distinct, focused services for scraping, geocoding, and website/flyer enrichment. This enhances modularity, scalability, and independent deployability.
+*   **Code Reusability and Sharing:**  Shared code (services, models, utilities) is even more critical in this service-oriented approach. We will ensure proper organization and documentation of shared components.
+*   **Optimized Update Cadence:** Separating website/flyer enrichment allows for a dedicated service to manage the regular update cadence efficiently, independent of geocoding.
+*   **Scalability and Resource Management:**  Separating services allows for independent scaling and resource allocation. Website/flyer enrichment, being more resource-intensive, can be scaled separately from the lighter-weight geocoding service.
+*   **Clearer Responsibilities:** Each service has a well-defined responsibility, making the system easier to understand, develop, and maintain.
 
-*   **Longer Post-Processing Time:** The `enrich_events.py` script will take longer to execute as it performs both geocoding and website/flyer processing. However, this is acceptable if it runs nightly.
-*   **Potential Bottleneck in Post-Process:** If the volume of events and website/flyer processing grows significantly, the post-processing script itself could become a bottleneck. This can be addressed later with scaling strategies if needed.
+**Handling Location Updates and Re-Geocoding:**
 
-### 2.2. Option 2: Staged Post-Processing
+*   **Location Change Detection:** We need to implement logic to detect when an event's `location` field is updated. This could be done:
+    *   **Within the API Update Event Endpoint:** When the API endpoint for updating an event is called, compare the new `location` value with the existing one. If it has changed, trigger the Geocoding Service for that event.
+    *   **Database Triggers (Potentially More Complex):**  PostgreSQL triggers could be used to automatically detect changes to the `location` column and enqueue a geocoding task. This might be overkill for now, but is an option for future consideration.
+*   **Re-Geocoding Process:** When a location change is detected, the Geocoding Service will be invoked for that specific event. The service will:
+    *   Geocode the new `location`.
+    *   Update the `latitude` and `longitude` fields in the `events` table for that event.
+    *   Invalidate any cached geocoding results for the old location (if caching is implemented by location string).
 
-**Description:**
+## 3. Updated Initial Development and Test Plan (Geocoding Service Focus)
 
-*   **Scraping Phase:**  Same as Option 1 - scraper extracts basic data.
-*   **Post-Processing Phase 1 (Geocoding):**  The `geocode_events.py` script is run first to quickly add GPS coordinates to events.
-*   **Post-Processing Phase 2 (Website/Flyer Enrichment):** A separate script (`enrich_website_flyer.py`) is run afterwards, focusing solely on website/flyer processing and Gemini API calls.
+Our initial development and testing phase will now focus on the **Geocoding Service (`geocode_events.py`)** and its on-demand/location-update triggering mechanism.
 
-**Workflow:**
+**Steps:**
 
-1.  **Scraper Runs:** Extracts basic event data and saves to the database.
-2.  **`geocode_events.py` Script Runs (Post-Process - Geocoding):** Adds GPS coordinates to events.
-3.  **`enrich_website_flyer.py` Script Runs (Post-Process - Website/Flyer):**
-    *   Queries the database for events needing website/flyer enrichment.
-    *   Fetches website/flyer content.
-    *   Makes Gemini API calls to extract detailed information.
-    *   Updates `event_details` and other fields.
-    *   Implements tiered update cadence logic.
+1.  **Refine `geocode_events.py` for Geocoding Service Role:**
+    *   Update `geocode_events.py` to focus *solely* on geocoding. Remove any website/flyer processing logic (if any was mistakenly added).
+    *   Ensure it efficiently queries for events needing geocoding (based on NULL `latitude`/`longitude`).
+    *   Implement robust error handling, logging, and caching within the service.
 
-**Pros:**
+2.  **Implement On-Demand Geocoding Trigger (API Endpoint):**
+    *   Modify the API endpoint for updating events (`/api/v1/events/{event_id}`) in `app/routers/events.py` and the corresponding CRUD function (`app/crud/events.py`).
+    *   Within the update logic, add a check: if the `location` field is being updated, trigger the `geocode_events.py` script (or a function within it) to re-geocode the event.  For initial simplicity, you can directly call the geocoding function within the API endpoint. For a more robust approach in the future, consider using a task queue to offload the geocoding task.
 
-*   **Further Decoupling:**  Even greater separation of concerns. Geocoding and website/flyer processing are completely independent processes.
-*   **Potentially Faster Initial Geocoding:** Geocoding is performed quickly in the first post-process, making basic location-based features available sooner.
-*   **Scalability for Enrichment:** If website/flyer processing becomes a major bottleneck, this second post-process could be scaled independently.
+3.  **Initial Test - On-Demand Geocoding:**
+    *   Manually create or update an event via the API, ensuring the `location` field is set or changed.
+    *   Verify that the Geocoding Service is triggered automatically after the event update.
+    *   Check that the `latitude` and `longitude` fields in the database are correctly updated for the event.
+    *   Examine logs to confirm the geocoding process and any errors.
 
-**Cons:**
+4.  **Batch Geocoding Test (Initial Data Load):**
+    *   Run the `geocode_events.py` script directly (via `docker-compose run --rm api python -m scripts.geocode_events`) to batch geocode all existing events that are missing location data.
+    *   Verify that the script processes all relevant events and updates their coordinates.
+    *   Monitor logs and database updates.
 
-*   **More Complex Workflow:** Two post-processing steps to manage and schedule.
-*   **Slightly Increased Management Overhead:** Requires managing two separate scripts and their scheduling.
+5.  **Remove Limitation and Full Geocoding Processing:**  Ensure `geocode_events.py` processes all events needing geocoding without artificial limitations.
 
-### 2.3. Option 3: In-Scrape Website/Flyer Processing (Not Recommended)
+6.  **Monitor and Refine Geocoding Service:** Monitor the performance and reliability of the Geocoding Service. Refine error handling, caching, and API interaction as needed.
 
-**Description:**
+## 4. Next Steps (Beyond Geocoding Service)
 
-*   Integrate website/flyer processing and Gemini API calls directly within the scraper's main loop. Geocoding could also be done within the scraper.
+After establishing the Geocoding Service, we will proceed with developing the **Website/Flyer Enrichment Service (`enrich_website_flyer.py`)**:
 
-**Cons:**
+1.  **Create `enrich_website_flyer.py` Script:** Develop the new script in `scripts/` to handle website/flyer fetching, Gemini API integration, `event_details` enrichment, and the tiered update cadence logic.
 
-*   **Increased Scraper Complexity:** The scraper becomes significantly more complex, handling scraping, geocoding, website/flyer processing, and Gemini API interactions.
-*   **Potential Scraper Slowdown:**  Website/flyer processing and Gemini API calls are time-consuming. Integrating them into the scraper will make the scraping process much slower and potentially more prone to timeouts and errors.
-*   **Error Handling Coupling:** Error handling for scraping, geocoding, and website/flyer processing becomes tightly coupled within the scraper, making it harder to debug and manage.
-*   **Reduced Maintainability:** A monolithic scraper is harder to maintain, test, and update compared to decoupled processes.
+2.  **Schedule `enrich_website_flyer.py`:** Configure a cron job to run this service regularly.
 
-## 3. Challenges
+3.  **Implement Tiered Update Cadence in `enrich_website_flyer.py`:**  Implement the logic for nightly/weekly checks based on event date proximity and `last_website_check_at` timestamps (or `updated_at`).
 
-Implementing data enrichment will present several challenges:
+4.  **Caching in Website/Flyer Enrichment Service:** Implement caching for website/flyer content and Gemini API responses within `enrich_website_flyer.py`.
 
-*   **Gemini API Rate Limits and Costs:**  Website/flyer processing will likely involve a significant number of Gemini API calls. We need to be mindful of API rate limits and costs. Batching Gemini API calls (as suggested in `next_steps_prompt.md`) and efficient data handling will be crucial.
-*   **Geocoding Service Reliability:** Geocoding services can have rate limits, downtime, and accuracy issues. Robust error handling, retries, and potentially caching are necessary in the `GeocodingService`.
-*   **Website/Flyer Content Variability:** Websites and flyers have diverse structures and formats.  Gemini AI prompts and extraction logic will need to be robust enough to handle this variability. We may need to refine prompts and parsing strategies iteratively.
-*   **Data Consistency and Updates:**  Ensuring data consistency across updates and handling cases where website/flyer information changes frequently will require careful design of the update cadence and data storage.
-*   **Error Monitoring and Logging:**  Comprehensive logging and error monitoring will be essential to track the success and failure rates of both geocoding and website/flyer processing, allowing for timely issue resolution.
+5.  **Error Handling and Monitoring for Both Services:**  Enhance error handling and set up monitoring for both the Geocoding Service and the Website/Flyer Enrichment Service.
 
-## 4. Recommended Approach
+6.  **Documentation Update:** Update all relevant documentation to reflect the service-oriented architecture, the two separate post-processing services, their workflows, configuration, and update strategies.
 
-**Option 1: Combined Post-Process** is the recommended approach for the following reasons:
+## 5. Conclusion
 
-*   **Best Balance of Simplicity and Efficiency:** It provides a clear separation of concerns while keeping the enrichment workflow manageable in a single post-processing script.
-*   **Suitable for Nightly Cadence:** Given the nightly cron schedule for scraping, the longer post-processing time of the combined script is acceptable.
-*   **Optimized Batch Processing:**  Allows for efficient batching of both geocoding and Gemini API calls, which is crucial for managing API usage and costs.
-*   **Maintainability:**  Keeps the scraper focused and the enrichment logic centralized, improving long-term maintainability.
-
-While Option 2 offers even more decoupling, the added complexity of managing two post-processing scripts is not justified at this stage, especially given that Option 1 provides a good balance and can be optimized further if needed. Option 3 is explicitly not recommended due to its significant drawbacks.
-
-## 5. Next Steps
-
-1.  **Implement `enrich_events.py` Script:** Create a new Python script in the `scripts/` directory named `enrich_events.py`. This script should:
-    *   Import and utilize the `GeocodingService` to geocode events.
-    *   Implement logic to fetch website and flyer content for events.
-    *   Use the Gemini API (via `ai_service.py`) to process website/flyer content and extract detailed event information.
-    *   Update the `event_details` JSONB field and potentially other relevant fields in the `events` table.
-    *   Implement the tiered update cadence logic (nightly/weekly checks).
-    *   Include robust error handling and logging.
-
-2.  **Schedule `enrich_events.py`:** Configure a cron job (or similar scheduling mechanism) to run `scripts/enrich_events.py` nightly, shortly after the scraper cron job is scheduled to complete.
-
-3.  **Testing and Refinement:** Thoroughly test the `enrich_events.py` script, including:
-    *   Testing geocoding accuracy and error handling.
-    *   Validating website/flyer processing and Gemini API integration.
-    *   Verifying the tiered update cadence logic.
-    *   Monitoring API usage and costs.
-    *   Refine Gemini prompts and extraction logic based on testing and data review.
-
-4.  **Documentation Update:** Update the project documentation (including `data_model.md`, `data_scraping_guide.md`, and potentially a new `data_enrichment_guide.md`) to reflect the data enrichment process, the `enrich_events.py` script, configuration options, and the update cadence strategy.
-
-## 6. Suggestions and Considerations
-
-*   **Caching:** Implement caching mechanisms at various levels (geocoding results, website/flyer content, Gemini API responses if feasible) to reduce redundant API calls and improve performance.
-*   **Asynchronous Processing:**  Within `enrich_events.py`, utilize asynchronous operations (e.g., `asyncio`, `aiohttp`) to handle network requests and Gemini API calls concurrently, maximizing efficiency.
-*   **Monitoring and Alerting:** Set up monitoring for the `enrich_events.py` script to track its execution time, success/failure rates, and API usage. Implement alerting for critical errors or performance issues.
-*   **Future Scalability:**  If data volume or processing complexity increases significantly, consider more advanced scaling strategies for the post-processing, such as:
-    *   Task queues (e.g., Celery, Redis Queue) to distribute enrichment tasks across workers.
-    *   Database optimizations for handling larger datasets and update loads.
-    *   Exploring more efficient or cost-effective geocoding and AI services.
-*   **Data Quality Monitoring:**  Implement processes to periodically review the quality of enriched data and identify areas for improvement in scraping, geocoding, or website/flyer processing logic.
-
-## 7. Conclusion
-
-By adopting the **Combined Post-Process** approach and following the outlined next steps, we can effectively implement data enrichment for TrailBlazeApp API, enhancing event data with geocoding and detailed information from websites and flyers. This strategy prioritizes maintainability, efficiency, and scalability while providing a robust framework for ongoing event updates. 
+By adopting this **Service-Oriented Post-Process** strategy, we are building a more scalable, maintainable, and cost-effective data enrichment pipeline. Separating geocoding and website/flyer processing into distinct services allows for optimized resource management, independent scaling, and a clearer separation of concerns, aligning with best practices for microservice architectures. This refined strategy provides a robust and flexible foundation for enriching event data and ensuring its ongoing accuracy and completeness. 
