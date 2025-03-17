@@ -20,6 +20,10 @@ class Event(Base):
     region = Column(String(100), nullable=True, index=True)
     distances = Column(ARRAY(String), nullable=True)
     
+    # Geolocation fields
+    latitude = Column(Float, nullable=True, index=True)
+    longitude = Column(Float, nullable=True, index=True)
+    
     # Core structured fields
     ride_manager = Column(String, nullable=True)
     manager_contact = Column(String, nullable=True)

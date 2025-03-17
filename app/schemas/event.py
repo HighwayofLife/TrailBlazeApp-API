@@ -33,6 +33,8 @@ class EventBase(BaseModel):
     flyer_url: Optional[str] = None
     region: Optional[str] = None
     distances: Optional[List[str]] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     ride_manager: Optional[str] = None
     manager_email: Optional[str] = None
     manager_phone: Optional[str] = None
@@ -63,6 +65,8 @@ class EventUpdate(BaseModel):
     flyer_url: Optional[str] = None
     region: Optional[str] = None
     distances: Optional[List[str]] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     ride_manager: Optional[str] = None
     manager_email: Optional[str] = None
     manager_phone: Optional[str] = None

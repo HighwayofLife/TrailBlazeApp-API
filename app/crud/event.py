@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.event import Event
 from app.schemas.event import EventCreate, EventUpdate
+from app.services.geocoding import GeocodingService
 from app.logging_config import get_logger
 
 logger = get_logger("crud.event")
@@ -32,6 +33,10 @@ async def get_events(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     region: Optional[str] = None,
+    location: Optional[str] = None,
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+    radius: Optional[float] = None,
 ) -> List[Event]:
     """
     Get a list of events with optional filtering.
@@ -43,6 +48,10 @@ async def get_events(
         date_from: Optional start date filter (ISO format)
         date_to: Optional end date filter (ISO format)
         region: Optional region filter
+        location: Optional location filter (text search)
+        lat: Optional latitude for geographic search
+        lng: Optional longitude for geographic search
+        radius: Optional radius in miles for geographic search
         
     Returns:
         List of events
@@ -66,6 +75,32 @@ async def get_events(
     
     if region:
         query = query.where(Event.region == region)
+    
+    if location:
+        # Simple text search on location field
+        query = query.where(Event.location.ilike(f"%{location}%"))
+    
+    # Geographic search if coordinates and radius are provided
+    if lat is not None and lng is not None and radius is not None:
+        # Using Haversine formula directly in SQL to calculate distance in miles
+        # This is a simplified approach for proximity search
+        # For a more accurate implementation, consider using PostGIS
+        # 3959 is the radius of the Earth in miles
+        # Note: This requires PostgreSQL's ability to execute mathematical functions
+        distance_formula = f"""
+            (3959 * acos(
+                cos(radians({lat})) * cos(radians(latitude)) * 
+                cos(radians(longitude) - radians({lng})) + 
+                sin(radians({lat})) * sin(radians(latitude))
+            ))
+        """
+        # We need to ensure both latitude and longitude are not null
+        query = query.where(Event.latitude.is_not(None))
+        query = query.where(Event.longitude.is_not(None))
+        # Using SQL expression to filter by distance
+        # This requires raw SQL execution which may vary by database backend
+        # For simplicity, we're using a text-based approach here
+        query = query.filter(f"({distance_formula}) <= {radius}")
     
     # Sort by date
     query = query.order_by(Event.date_start)
@@ -97,6 +132,8 @@ async def create_event(db: AsyncSession, event: EventCreate) -> Event:
         flyer_url=event.flyer_url,
         region=event.region,
         distances=event.distances,
+        latitude=event.latitude,
+        longitude=event.longitude,
         ride_manager=event.ride_manager,
         manager_contact=event.manager_contact,
         event_type=event.event_type,
@@ -106,9 +143,22 @@ async def create_event(db: AsyncSession, event: EventCreate) -> Event:
         source=getattr(event, 'source', None),
     )
     
+    # Add to session
     db.add(db_event)
     await db.commit()
     await db.refresh(db_event)
+    
+    # Geocode the event if coordinates are not provided
+    if db_event.latitude is None or db_event.longitude is None:
+        geocoding_service = GeocodingService()
+        success = await geocoding_service.geocode_event(db_event)
+        
+        if success:
+            await db.commit()
+            await db.refresh(db_event)
+            logger.info(f"Geocoded event {db_event.id} to coordinates: ({db_event.latitude}, {db_event.longitude})")
+        else:
+            logger.warning(f"Failed to geocode event {db_event.id} at location: {db_event.location}")
     
     logger.info(f"Created new event: {db_event.id} - {db_event.name}")
     return db_event
@@ -134,6 +184,13 @@ async def update_event(db: AsyncSession, event_id: int, event: EventUpdate) -> O
     # Create a dictionary with only the fields that are not None
     update_data = {k: v for k, v in event.dict().items() if v is not None}
     
+    # Flag to determine if we need to geocode after update
+    need_geocoding = False
+    
+    # If the location is being updated and coordinates are not provided, we'll need to geocode
+    if 'location' in update_data and ('latitude' not in update_data or 'longitude' not in update_data):
+        need_geocoding = True
+    
     if update_data:
         # Update the event
         query = (
@@ -146,9 +203,23 @@ async def update_event(db: AsyncSession, event_id: int, event: EventUpdate) -> O
         await db.commit()
         
         logger.info(f"Updated event: {event_id}")
+    
+    # Get the updated event
+    db_event = await get_event(db, event_id)
+    
+    # Geocode if needed
+    if need_geocoding or (db_event.latitude is None or db_event.longitude is None):
+        geocoding_service = GeocodingService()
+        success = await geocoding_service.geocode_event(db_event)
         
+        if success:
+            await db.commit()
+            logger.info(f"Geocoded event {event_id} to coordinates: ({db_event.latitude}, {db_event.longitude})")
+        else:
+            logger.warning(f"Failed to geocode event {event_id} at location: {db_event.location}")
+    
     # Return the updated event
-    return await get_event(db, event_id)
+    return db_event
 
 
 async def delete_event(db: AsyncSession, event_id: int) -> bool:

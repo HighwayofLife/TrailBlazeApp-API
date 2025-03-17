@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # Scraping settings
     SCRAPING_SCHEDULE: str = "0 0 * * *"  # Daily at midnight
     
+    # Geocoding settings
+    GEOCODING_PROVIDER: str = os.getenv("GEOCODING_PROVIDER", "nominatim")  # nominatim or google
+    GEOCODING_USER_AGENT: str = os.getenv("GEOCODING_USER_AGENT", "TrailBlazeApp")  # Required for Nominatim
+    GEOCODING_API_KEY: str = os.getenv("GEOCODING_API_KEY", "")  # Required for Google
+    GEOCODING_TIMEOUT: int = int(os.getenv("GEOCODING_TIMEOUT", "5"))
+    GEOCODING_RETRIES: int = int(os.getenv("GEOCODING_RETRIES", "3"))
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
