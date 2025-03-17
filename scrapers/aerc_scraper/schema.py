@@ -41,7 +41,8 @@ AERC_EVENT_SCHEMA = {
         },
         'mapLink': {'type': 'string'},
         'hasIntroRide': {'type': 'boolean'},
-        'tag': {'type': 'integer'}
+        'tag': {'type': 'integer'},
+        'is_canceled': {'type': 'boolean'}
     },
     'required': ['rideName', 'date', 'region', 'location']
 }

@@ -68,7 +68,7 @@ class EventBase(BaseModel):
     website_url: Optional[HttpUrl] = None
     registration_url: Optional[HttpUrl] = None
     has_intro_ride: bool = False
-    is_cancelled: bool = False
+    is_canceled: bool = False
     external_id: Optional[str] = None
     last_updated: datetime = Field(default_factory=datetime.now)
 

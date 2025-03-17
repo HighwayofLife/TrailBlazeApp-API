@@ -167,7 +167,8 @@ class GeminiClient:
                         }
                     },
                     "mapLink": {"type": "STRING", "description": "Google Maps URL"},
-                    "hasIntroRide": {"type": "BOOLEAN", "description": "Whether the event has an intro ride"}
+                    "hasIntroRide": {"type": "BOOLEAN", "description": "Whether the event has an introductory ride"},
+                    "is_canceled": {"type": "BOOLEAN", "description": "Whether the event has been canceled"}
                 },
                 "required": ["rideName", "date", "location"]
             }
@@ -929,12 +930,18 @@ class GeminiClient:
                 # Map basic fields with fallbacks for different field names
                 name = event.get('rideName') or event.get('name') or event.get('title') or "Unknown Event"
                 
-                # Check if event is cancelled
+                # Check if event is canceled
                 is_canceled = False
-                # Simplified approach: look for "cancel" anywhere in the ride name
-                if re.search(r'cancel[l]?ed', name, re.IGNORECASE):
+                
+                # Check in name using regex (detects both US/UK spelling)
+                if re.search(r'cancel(?:l)?ed', name, re.IGNORECASE) or any(keyword in name.lower() for keyword in ['cancel', 'cancelled', 'canceled', 'postponed', 'reschedule']):
                     is_canceled = True
-                    logger.info(f"Detected cancelled event: {name}")
+                    logger.info(f"Detected canceled event from name: {name}")
+                
+                # Check if it was directly identified by Gemini (either spelling)
+                if event.get('is_canceled') is True or event.get('is_cancelled') is True:
+                    is_canceled = True
+                    logger.info(f"Detected canceled event from Gemini metadata: {name}")
                 
                 # Extract date information
                 date_start = event.get('date') or event.get('dateStart') or event.get('startDate')

@@ -15,6 +15,8 @@ class MockSettings:
     primary_model: str = "gemini-2.0-flash-lite"
     fallback_model: str = "gemini-2.0-flash"
     temperature: float = 0.2
+    html_chunk_size: int = 20000
+    max_output_tokens: int = 8192
 
 @pytest.fixture
 def client():
