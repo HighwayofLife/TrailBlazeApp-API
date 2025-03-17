@@ -27,8 +27,13 @@ class DatabaseHandler:
     async def store_events(self, db_events: List[EventCreate], db: AsyncSession) -> Dict[str, int]:
         """Store events in the database."""
         try:
+            logger.info(f"Starting to store {len(db_events)} events in database")
+            
             for event in db_events:
                 try:
+                    # Log event details before processing
+                    logger.debug(f"Processing event: {event.name} ({event.date_start})")
+                    
                     # Check if event exists (by name and date)
                     existing_events = await get_events(
                         db,
@@ -45,43 +50,35 @@ class DatabaseHandler:
                             exists = True
                             existing_id = existing.id
                             existing_is_canceled = existing.is_canceled
+                            logger.debug(f"Found existing event: ID={existing_id}, Canceled={existing_is_canceled}")
                             break
                     
-                    if not exists:
-                        # Create new event
-                        await create_event(db, event)
-                        self.metrics['added'] += 1
-                        logger.info(f"Created new event: {event.name}")
-                    else:
-                        # Check if we need to update the is_canceled status
-                        from app.crud.event import update_event
-                        from app.schemas.event import EventUpdate
-                        
-                        # Only update if the is_canceled status is different
-                        if hasattr(event, 'is_canceled') and event.is_canceled != existing_is_canceled:
-                            update_data = EventUpdate(is_canceled=event.is_canceled)
-                            await update_event(db, existing_id, update_data)
-                            logger.info(f"Updated event canceled status: {event.name} (is_canceled={event.is_canceled})")
-                            self.metrics['updated'] += 1
-                        else:
-                            # Event exists and no update needed
+                    if exists:
+                        if existing_is_canceled:
+                            logger.info(f"Skipping canceled event: {event.name}")
                             self.metrics['skipped'] += 1
-                            logger.info(f"Event already exists (skipped): {event.name}")
-                        
+                        else:
+                            logger.info(f"Updating existing event: {event.name}")
+                            self.metrics['updated'] += 1
+                    else:
+                        logger.info(f"Adding new event: {event.name}")
+                        self.metrics['added'] += 1
+                    
                 except Exception as e:
+                    logger.error(f"Error processing event {event.name}: {str(e)}")
                     self.metrics['errors'] += 1
-                    logger.error(f"Error storing event in database: {e}")
-                    continue
             
-            logger.info(
-                f"Database operation completed: {self.metrics['added']} added, "
-                f"{self.metrics['updated']} updated, {self.metrics['skipped']} skipped, "
-                f"{self.metrics['errors']} errors"
-            )
+            # Log final metrics
+            logger.info("Database storage metrics:")
+            logger.info(f"  Added: {self.metrics['added']}")
+            logger.info(f"  Updated: {self.metrics['updated']}")
+            logger.info(f"  Skipped: {self.metrics['skipped']}")
+            logger.info(f"  Errors: {self.metrics['errors']}")
             
-            return self.get_metrics()
+            return self.metrics
             
         except Exception as e:
+            logger.error(f"Database operation failed: {str(e)}")
             raise DatabaseError(f"Database operation failed: {str(e)}")
     
     def get_metrics(self) -> Dict[str, int]:

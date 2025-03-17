@@ -177,7 +177,8 @@ class DataConverter:
                         map_url=event.get('map_url') or event.get('mapLink'),
                         has_intro_ride=bool(event.get('has_intro_ride', False)) or bool(event.get('hasIntroRide', False)),
                         external_id=str(event.get('external_id') or event.get('tag') or "") or None,
-                        source='AERC'
+                        source='AERC',
+                        is_canceled=bool(event.get('is_canceled', False))
                     )
                     
                     db_events.append(db_event)

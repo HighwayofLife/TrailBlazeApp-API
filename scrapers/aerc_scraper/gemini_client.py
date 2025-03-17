@@ -59,6 +59,12 @@ class GeminiClient:
     
     def _create_prompt(self, chunk: str) -> str:
         """Create a prompt for Gemini models."""
+        # Log chunk size and content preview
+        chunk_size = len(chunk)
+        preview = chunk[:200] + "..." if len(chunk) > 200 else chunk
+        logger.info(f"Processing chunk of size {chunk_size} bytes")
+        logger.debug(f"Chunk preview: {preview}")
+        
         return f"""
         I need you to extract endurance ride events from this AERC calendar HTML and return a JSON array.
 
@@ -912,205 +918,138 @@ class GeminiClient:
         return self.metrics.copy()
         
     def _map_fields(self, events_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Transform extracted data to match the database schema.
-        
-        Maps fields from the AI extraction format to the database schema format:
-        - rideName -> name
-        - date -> date_start
-        - rideManager -> ride_manager
-        - mapLink -> map_link
-        - etc.
-        """
+        """Map fields from the extracted data to the expected schema."""
         if not events_data:
             return []
-            
+        
         mapped_events = []
         
-        # Update the events processed count
-        self.metrics['events_processed'] += len(events_data)
-        
         for event in events_data:
-            mapped_event = {}
-            
-            # Debug output for each event before mapping
-            logger.debug(f"Mapping event: {json.dumps(event, indent=2, default=str)}")
-            
-            # Map basic fields with more robust handling
-            # For the name field, try multiple source fields with fallbacks
-            if 'rideName' in event and event['rideName']:
-                mapped_event['name'] = event['rideName']
-            elif 'name' in event and event['name']:
-                mapped_event['name'] = event['name']
-            else:
-                # Try to create a name from other fields if possible
-                if 'location' in event and event['location']:
-                    prefix = "Event at "
-                    if 'date' in event and event['date']:
-                        prefix = f"Event on {event['date']} at "
-                    mapped_event['name'] = f"{prefix}{event['location']}"
-                elif 'region' in event and event['region']:
-                    mapped_event['name'] = f"AERC Event in {event['region']}"
-                else:
-                    mapped_event['name'] = "Unnamed AERC Event"
-                    logger.warning(f"Created fallback name for event: {mapped_event['name']}")
-                    # Store this as an event with issues for potential reprocessing
-                    self.metrics['events_with_issues'].append({
-                        'issue': 'missing_name',
-                        'original_data': event
-                    })
-            
-            # Check for cancelled events by examining the name field
-            # Default is not cancelled
-            mapped_event['is_canceled'] = False
-            
-            # Get the name for cancelled check
-            event_name = mapped_event.get('name', '')
-            
-            # Check for various cancelled indicators in the name
-            cancel_indicators = ['**cancelled**', '** cancelled **', '**canceled**', '** canceled **', 
-                               'cancelled', 'canceled', 'event cancelled', 'event canceled']
-            
-            # Case-insensitive search for cancel keywords
-            if any(indicator.lower() in event_name.lower() for indicator in cancel_indicators):
-                mapped_event['is_canceled'] = True
-                logger.info(f"Detected cancelled event: {event_name}")
+            try:
+                # Map basic fields with fallbacks for different field names
+                name = event.get('rideName') or event.get('name') or event.get('title') or "Unknown Event"
                 
-                # Log this for metrics
-                self.metrics['events_with_issues'].append({
-                    'issue': 'cancelled_event',
-                    'event_name': event_name
-                })
-            
-            # Map date with better handling
-            if 'date' in event and event['date']:
-                mapped_event['date_start'] = event['date']
-            else:
-                # Try to extract from distances
-                if 'distances' in event and event['distances'] and isinstance(event['distances'], list):
-                    for distance in event['distances']:
-                        if isinstance(distance, dict) and 'date' in distance and distance['date']:
-                            mapped_event['date_start'] = distance['date']
-                            logger.debug(f"Extracted date_start from distance: {distance['date']}")
-                            break
-                if 'date_start' not in mapped_event:
-                    # Use current date as last resort
-                    from datetime import datetime
-                    current_date = datetime.now().strftime('%Y-%m-%d')
-                    mapped_event['date_start'] = current_date
-                    logger.warning(f"Missing date_start, using current date: {current_date}")
-            
-            # Map location with better handling
-            if 'location' in event and event['location']:
-                mapped_event['location'] = event['location']
-            else:
-                # Try to extract location from other fields
-                location_parts = []
-                if 'region' in event and event['region']:
-                    location_parts.append(event['region'])
+                # Check if event is cancelled
+                is_canceled = False
+                # Simplified approach: look for "cancel" anywhere in the ride name
+                if re.search(r'cancel[l]?ed', name, re.IGNORECASE):
+                    is_canceled = True
+                    logger.info(f"Detected cancelled event: {name}")
                 
-                if location_parts:
-                    mapped_event['location'] = ", ".join(location_parts)
-                else:
-                    mapped_event['location'] = "Unknown Location"
-                    logger.warning(f"Missing location, using fallback: {mapped_event['location']}")
-            
-            # Map region
-            if 'region' in event and event['region']:
-                mapped_event['region'] = event['region']
-            
-            # Map ride manager information
-            if 'rideManager' in event and event['rideManager']:
-                mapped_event['ride_manager'] = event['rideManager']
-            
-            # Map contact information
-            if 'rideManagerContact' in event and isinstance(event['rideManagerContact'], dict):
-                contact = event['rideManagerContact']
-                if 'email' in contact and contact['email']:
-                    mapped_event['manager_email'] = contact['email']
-                if 'phone' in contact and contact['phone']:
-                    mapped_event['manager_phone'] = contact['phone']
+                # Extract date information
+                date_start = event.get('date') or event.get('dateStart') or event.get('startDate')
+                date_end = event.get('dateEnd') or event.get('endDate')
                 
-                # Store the full contact info in manager_contact
-                contact_parts = []
-                if 'name' in contact and contact['name']:
-                    contact_parts.append(f"Name: {contact['name']}")
-                if 'email' in contact and contact['email']:
-                    contact_parts.append(f"Email: {contact['email']}")
-                if 'phone' in contact and contact['phone']:
-                    contact_parts.append(f"Phone: {contact['phone']}")
+                # Extract location information
+                location = event.get('location') or event.get('venue') or "Unknown Location"
                 
-                if contact_parts:
-                    mapped_event['manager_contact'] = "; ".join(contact_parts)
-            
-            # Map judges
-            if 'controlJudges' in event and event['controlJudges'] and isinstance(event['controlJudges'], list):
+                # Extract region information
+                region = event.get('region') or event.get('state') or ""
+                
+                # Extract ride manager information
+                ride_manager = event.get('rideManager') or event.get('manager') or event.get('organizer') or ""
+                
+                # Extract contact information
+                manager_contact = ""
+                manager_email = None
+                manager_phone = None
+                
+                if event.get('rideManagerContact'):
+                    contact = event['rideManagerContact']
+                    contact_parts = []
+                    
+                    if isinstance(contact, dict):
+                        if contact.get('name'):
+                            contact_parts.append(f"Name: {contact['name']}")
+                        if contact.get('email'):
+                            manager_email = contact['email']
+                            contact_parts.append(f"Email: {contact['email']}")
+                        if contact.get('phone'):
+                            manager_phone = contact['phone']
+                            contact_parts.append(f"Phone: {contact['phone']}")
+                    
+                    manager_contact = "\n".join(contact_parts)
+                
+                # Extract individual contact fields if they exist
+                if event.get('managerEmail'):
+                    manager_email = event['managerEmail']
+                if event.get('managerPhone'):
+                    manager_phone = event['managerPhone']
+                
+                # Extract control judges
                 judges = []
-                for judge in event['controlJudges']:
-                    if isinstance(judge, dict) and 'name' in judge:
-                        role = judge.get('role', 'Judge')
-                        judges.append(f"{role}: {judge['name']}")
-                if judges:
-                    mapped_event['judges'] = judges
-            
-            # Map distances
-            if 'distances' in event and event['distances'] and isinstance(event['distances'], list):
-                # Extract just the distance values for the distances array
+                if event.get('controlJudges'):
+                    judges_data = event['controlJudges']
+                    if isinstance(judges_data, list):
+                        for judge in judges_data:
+                            if isinstance(judge, dict) and judge.get('name'):
+                                role = judge.get('role', 'Judge')
+                                judges.append(f"{role}: {judge['name']}")
+                            elif isinstance(judge, str):
+                                judges.append(judge)
+                
+                # Extract distances
                 distances = []
-                for d in event['distances']:
-                    if isinstance(d, dict) and 'distance' in d:
-                        distances.append(d['distance'])
-                    elif isinstance(d, str):
-                        distances.append(d)
-                
-                if distances:
-                    mapped_event['distances'] = distances
-                    
-                    # Store the full distance details in event_details
-                    mapped_event['event_details'] = {
-                        'distances': event['distances']
-                    }
-                    
-                    # Find the latest date for date_end if there are multiple days
-                    if 'date_start' in mapped_event:
-                        latest_date = mapped_event['date_start']
+                if event.get('distances'):
+                    if isinstance(event['distances'], list):
                         for distance in event['distances']:
-                            if isinstance(distance, dict) and 'date' in distance and distance['date'] > latest_date:
+                            if isinstance(distance, dict) and distance.get('distance'):
+                                distances.append(distance['distance'])
+                            elif isinstance(distance, str):
+                                distances.append(distance)
+                    elif isinstance(event['distances'], str):
+                        distances = [event['distances']]
+                
+                # Determine end date from distances if available
+                if not date_end and event.get('distances') and isinstance(event['distances'], list):
+                    latest_date = None
+                    for distance in event['distances']:
+                        if isinstance(distance, dict) and distance.get('date'):
+                            if latest_date is None or distance['date'] > latest_date:
                                 latest_date = distance['date']
-                        
-                        if latest_date != mapped_event['date_start']:
-                            mapped_event['date_end'] = latest_date
-            
-            # Map other fields
-            if 'mapLink' in event:
-                mapped_event['map_link'] = event['mapLink']
+                    
+                    if latest_date:
+                        date_end = latest_date
                 
-            if 'hasIntroRide' in event:
-                mapped_event['event_details'] = mapped_event.get('event_details', {})
-                mapped_event['event_details']['hasIntroRide'] = event['hasIntroRide']
+                # Map other fields
+                map_url = event.get('mapLink') or event.get('mapUrl')
+                has_intro_ride = event.get('hasIntroRide', False) or event.get('introRide', False)
+                external_id = str(event.get('tag') or event.get('id') or event.get('external_id') or "")
                 
-            if 'tag' in event:
-                mapped_event['external_id'] = str(event['tag'])
-            
-            # Set default event type and source
-            mapped_event['event_type'] = 'endurance'
-            mapped_event['source'] = 'AERC'
-            
-            # Debug output for the mapped event
-            logger.debug(f"Mapped event: {json.dumps(mapped_event, indent=2, default=str)}")
-            
-            # Verify all required fields are present
-            missing_fields = []
-            for required_field in ['name', 'date_start', 'location']:
-                if required_field not in mapped_event or not mapped_event[required_field]:
-                    missing_fields.append(required_field)
-            
-            if missing_fields:
-                logger.warning(f"Mapped event is missing required fields: {', '.join(missing_fields)}")
-            
-            mapped_events.append(mapped_event)
-            
-        logger.info(f"Mapped {len(mapped_events)} events")
+                # Create mapped event
+                mapped_event = {
+                    'name': name,
+                    'date_start': date_start,
+                    'location': location,
+                    'region': region,
+                    'ride_manager': ride_manager,
+                    'manager_contact': manager_contact,
+                    'manager_email': manager_email,
+                    'manager_phone': manager_phone,
+                    'judges': judges,
+                    'distances': distances,
+                    'map_link': map_url,
+                    'has_intro_ride': has_intro_ride,
+                    'external_id': external_id if external_id else None,
+                    'event_type': 'endurance',
+                    'source': 'AERC',
+                    'is_canceled': is_canceled
+                }
+                
+                # Add end date if available
+                if date_end:
+                    mapped_event['date_end'] = date_end
+                
+                # Store original event details for reference
+                mapped_event['event_details'] = event
+                
+                mapped_events.append(mapped_event)
+                
+            except Exception as e:
+                logger.error(f"Error mapping event fields: {e}")
+                logger.error(f"Event data: {event}")
+                continue
+        
         return mapped_events
 
 class GeminiClientStream(GeminiClient):
@@ -1144,4 +1083,34 @@ class GeminiClientStream(GeminiClient):
             return self._process_response(response, chunk_index)
         except Exception as e:
             logger.error(f"Error extracting events with streaming API for chunk {chunk_index}: {str(e)}")
+            return []
+
+    async def extract_events(self, chunk: str) -> List[Dict[str, Any]]:
+        """Extract events from HTML chunk using Gemini."""
+        try:
+            # Log start of extraction
+            logger.info("Starting event extraction from chunk")
+            
+            # Create prompt and schema
+            prompt_data = self._create_prompt(chunk)
+            prompt = prompt_data["prompt"]
+            schema = prompt_data["schema"]
+            
+            # Log prompt details
+            logger.debug(f"Created prompt with schema: {json.dumps(schema, indent=2)}")
+            
+            # Make API call
+            response = await self._make_api_call(prompt, schema)
+            
+            # Log response
+            if response:
+                logger.info(f"Successfully extracted {len(response)} events from chunk")
+                logger.debug(f"Extracted events: {json.dumps(response, indent=2)}")
+            else:
+                logger.warning("No events extracted from chunk")
+            
+            return response or []
+            
+        except Exception as e:
+            logger.error(f"Error extracting events from chunk: {str(e)}")
             return []

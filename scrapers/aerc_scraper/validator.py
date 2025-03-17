@@ -4,7 +4,7 @@ import logging
 import json
 import sys
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from datetime import datetime
 from pydantic import ValidationError
 from app.logging_config import get_logger
@@ -221,3 +221,39 @@ class DataValidator:
     def get_metrics(self) -> Dict[str, Any]:
         """Get validation metrics."""
         return self.metrics.copy()
+
+    def validate_event(self, event: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """Validate an event's data."""
+        issues = []
+        
+        # Log event being validated
+        logger.debug(f"Validating event: {event.get('name', 'Unknown')}")
+        
+        # Check required fields
+        required_fields = ['name', 'date', 'location']
+        for field in required_fields:
+            if not event.get(field):
+                issues.append(f"Missing required field: {field}")
+                logger.warning(f"Event validation failed: Missing {field}")
+        
+        # Validate date format
+        if event.get('date'):
+            try:
+                datetime.strptime(event['date'], '%Y-%m-%d')
+            except ValueError:
+                issues.append("Invalid date format. Must be YYYY-MM-DD")
+                logger.warning(f"Event validation failed: Invalid date format: {event['date']}")
+        
+        # Validate location
+        if event.get('location'):
+            if len(event['location']) < 3:
+                issues.append("Location too short")
+                logger.warning(f"Event validation failed: Location too short: {event['location']}")
+        
+        # Log validation result
+        if issues:
+            logger.warning(f"Event validation failed with {len(issues)} issues: {', '.join(issues)}")
+        else:
+            logger.info(f"Event validation passed: {event.get('name', 'Unknown')}")
+        
+        return len(issues) == 0, issues
