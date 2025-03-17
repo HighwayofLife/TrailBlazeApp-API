@@ -30,6 +30,7 @@ cache/*
 logs/*
 .vscode/*
 .cursor/*
+.cursorignore
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

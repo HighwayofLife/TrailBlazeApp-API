@@ -7,7 +7,7 @@
 DOCKER_COMPOSE := docker-compose
 PROJECT_NAME := trailblaze
 
-.PHONY: help build up down restart status logs test test-api test-unit test-integration test-scraper check-db clean docs version check-env health setup-local setup-test-db clean-test-db test-sequential
+.PHONY: help build up down restart status logs test test-api test-unit test-integration test-scraper check-db clean docs version check-env health setup-local setup-test-db clean-test-db test-sequential enrich-geocode enrich-website
 
 # Colors for terminal output
 GREEN := \033[0;32m
@@ -148,6 +148,17 @@ migrate-create: ## Create a new migration
 # Scraper Commands
 scraper-%: ## Run a specific scraper (e.g. make scraper-aerc_calendar)
 	$(DOCKER_COMPOSE) run --rm scraper python -m scrapers.run_scrapers $*
+
+# Enrichment Commands
+enrich-geocode: ## Run the geocoding enrichment service
+	@echo "${BLUE}Running geocoding enrichment...${NC}"
+	$(DOCKER_COMPOSE) run --rm api python -m scripts.geocode_events
+	@echo "${GREEN}Geocoding enrichment complete!${NC}"
+
+enrich-website: ## Run the website/flyer enrichment service
+	@echo "${BLUE}Running website/flyer enrichment...${NC}"
+	$(DOCKER_COMPOSE) run --rm api python -m scripts.enrich_website_flyer
+	@echo "${GREEN}Website/flyer enrichment complete!${NC}"
 
 # Documentation
 docs: ## Generate API documentation
