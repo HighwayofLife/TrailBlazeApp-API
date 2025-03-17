@@ -162,7 +162,21 @@ tests/scrapers/new_scraper/
 
 ## Running Scrapers
 
-### Manual Execution
+### Using the Makefile
+
+The project includes a Makefile that simplifies running scrapers. Here are the main scraper commands:
+
+```bash
+# Run a specific scraper (e.g., AERC calendar scraper)
+make scraper-aerc_calendar
+
+# Run tests for scrapers
+make test-scraper
+```
+
+These commands will set up the necessary environment and run the scrapers in Docker containers to ensure a consistent environment.
+
+#### Manual Execution
 
 ```bash
 # Run all scrapers

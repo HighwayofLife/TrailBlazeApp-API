@@ -66,6 +66,32 @@ Visit [http://localhost:8000/docs](http://localhost:8000/docs) to view the inter
 docker-compose up -d
 ```
 
+### Using the Makefile
+
+The project includes a comprehensive Makefile that simplifies common development, testing, and deployment tasks:
+
+```bash
+# View all available commands
+make help
+
+# Build and start all services
+make build
+make up
+
+# View logs
+make logs
+
+# Run tests
+make test
+
+# Stop services
+make down
+```
+
+For a complete list of Makefile commands and their descriptions, see the [Development Guide](docs/development_guide.md).
+
+Visit [http://localhost:8000/docs](http://localhost:8000/docs) to view the interactive API documentation.
+
 ## Documentation
 
 For detailed documentation, please see the [docs folder](docs/README.md):

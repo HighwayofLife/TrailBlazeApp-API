@@ -59,6 +59,51 @@ docker-compose exec api alembic current
 kubectl exec -it <pod-name> -- alembic current
 ```
 
+### Using the Makefile for Deployment Tasks
+
+The project includes a Makefile that simplifies many deployment and maintenance tasks. Here are some useful commands for deployment:
+
+```bash
+# Build all containers
+make build
+
+# Start all services in detached mode
+make up
+
+# Check the status of services
+make status
+
+# View logs from all containers
+make logs
+
+# Check health of all services
+make health
+
+# Backup the database
+make db-backup
+
+# Restore the database from a backup file
+make db-restore FILE=backup_20230101_120000.sql
+
+# Run database migrations
+make migrate
+
+# Stop all services
+make down
+
+# Clean up containers and volumes
+make clean
+
+# Remove all containers, volumes, and images
+make purge
+```
+
+For a complete list of available commands, run:
+
+```bash
+make help
+```
+
 ## Continuous Deployment
 
 ### GitHub Actions Workflow

@@ -40,6 +40,60 @@ This document provides guidelines and procedures for maintaining the TrailBlazeA
 - Test disaster recovery procedures
 - Update documentation if needed
 
+### Using the Makefile for Maintenance
+
+The project includes a Makefile that simplifies many routine maintenance tasks. Here are some useful commands for maintenance:
+
+```bash
+# Check health of all services
+make health
+
+# View logs from all containers
+make logs
+
+# View logs from a specific service (e.g., API)
+make logs-api
+
+# Backup the database
+make db-backup
+
+# Restore the database from a backup file
+make db-restore FILE=backup_20230101_120000.sql
+
+# Run database migrations
+make migrate
+
+# Check database connectivity
+make check-db
+
+# Run tests to verify system integrity
+make test
+
+# Run specific test suites
+make test-api
+make test-unit
+make test-integration
+make test-scraper
+
+# Run a specific scraper to update data
+make scraper-aerc_calendar
+
+# Generate updated API documentation
+make docs
+
+# Check the status of services
+make status
+
+# Restart all services
+make restart
+```
+
+For a complete list of available commands, run:
+
+```bash
+make help
+```
+
 ## Monitoring
 
 ### Key Metrics to Monitor

@@ -55,7 +55,66 @@ tests/
 
 ## Running Tests
 
-### Running All Tests
+### Running Tests Locally
+
+To run the full test suite:
+
+```bash
+pytest
+```
+
+To run specific test categories:
+
+```bash
+# Run unit tests only
+pytest tests/unit/
+
+# Run API tests only
+pytest tests/api/
+
+# Run scraper tests only
+pytest tests/scrapers/
+```
+
+To run a specific test file:
+
+```bash
+pytest tests/api/v1/test_events.py
+```
+
+To run a specific test:
+
+```bash
+pytest tests/api/v1/test_events.py::test_get_event_by_id
+```
+
+### Using the Makefile for Testing
+
+The project includes a Makefile that simplifies running tests. Here are the main testing commands:
+
+```bash
+# Run all tests
+make test
+
+# Run API tests only
+make test-api
+
+# Run unit tests only
+make test-unit
+
+# Run integration tests only
+make test-integration
+
+# Run scraper tests only
+make test-scraper
+
+# Run tests for CI environment
+make ci-test
+```
+
+These commands will set up the necessary environment, including test databases, and run the tests in Docker containers to ensure a consistent testing environment.
+
+### Running Tests in Docker
 
 ```bash
 # Run all tests

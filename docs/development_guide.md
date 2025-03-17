@@ -73,6 +73,71 @@ Ensure that the following services are running:
 - `scraper`: Scraper service
 - `manage`: Management tasks
 
+### Using the Makefile
+
+The project includes a comprehensive Makefile that simplifies common development tasks. To see all available commands:
+
+```bash
+make help
+```
+
+#### Common Makefile Commands
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build all Docker containers |
+| `make up` | Start all services |
+| `make down` | Stop all services |
+| `make restart` | Restart all services |
+| `make logs` | View logs from all containers |
+| `make logs-api` | View logs from the API service |
+| `make shell-api` | Open a shell in the API container |
+| `make db-shell` | Open a PostgreSQL shell |
+| `make test` | Run all tests |
+| `make test-api` | Run API tests only |
+| `make test-unit` | Run unit tests only |
+| `make test-integration` | Run integration tests only |
+| `make test-scraper` | Run scraper tests only |
+| `make migrate` | Run database migrations |
+| `make migrate-create MSG="message"` | Create a new migration |
+| `make scraper-aerc_calendar` | Run a specific scraper |
+| `make docs` | Generate API documentation |
+| `make lint` | Run linters (flake8, mypy) |
+| `make format` | Format code with black and isort |
+| `make health` | Check health of services |
+| `make db-backup` | Backup database to file |
+| `make db-restore FILE=backup.sql` | Restore database from file |
+
+#### Development Workflow with Makefile
+
+A typical development workflow using the Makefile might look like:
+
+```bash
+# Start the services
+make up
+
+# View logs
+make logs
+
+# Run tests
+make test
+
+# Format code
+make format
+
+# Check linting
+make lint
+
+# Create a database migration
+make migrate-create MSG="add user table"
+
+# Apply migrations
+make migrate
+
+# Stop services when done
+make down
+```
+
 ## Project Structure
 
 ```
