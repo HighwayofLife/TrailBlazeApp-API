@@ -17,6 +17,13 @@ class AERCScraperSettings(ScraperSettings):
     temperature: float = 0.1
     max_output_tokens: int = 8192
     
+    # Network settings
+    request_timeout: int = 30
+    retry_delay: int = 2
+    
+    # Cache settings
+    refresh_cache: bool = False
+    
     # Chunking settings
     initial_chunk_size: int = 30000
     min_chunk_size: int = 15000
