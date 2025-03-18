@@ -23,6 +23,7 @@ class Event(Base):
     # Geolocation fields
     latitude = Column(Float, nullable=True, index=True)
     longitude = Column(Float, nullable=True, index=True)
+    geocoding_attempted = Column(Boolean, default=False)
     
     # Core structured fields
     ride_manager = Column(String, nullable=True)
@@ -37,6 +38,7 @@ class Event(Base):
     
     # External reference
     external_id = Column(String, nullable=True)
+    ride_id = Column(String, nullable=True, index=True)  # ID from source system (e.g., AERC tag)
     
     # Manager details
     manager_email = Column(String, nullable=True)
@@ -46,6 +48,7 @@ class Event(Base):
     judges = Column(ARRAY(String), nullable=True)
     directions = Column(Text, nullable=True)
     map_link = Column(String, nullable=True)
+    has_intro_ride = Column(Boolean, default=False)
     
     # Timestamps and metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
