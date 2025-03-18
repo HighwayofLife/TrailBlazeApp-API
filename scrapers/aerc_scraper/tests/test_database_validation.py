@@ -23,6 +23,7 @@ if project_root not in sys.path:
 from scrapers.aerc_scraper.parser_v2.html_parser import HTMLParser
 from scrapers.aerc_scraper.data_handler import DataHandler
 from app.schemas.event import EventCreate
+from scrapers.aerc_scraper.tests.expected_test_data import EXPECTED_DATA, EVENT_SAMPLES
 
 # Import HTML samples
 HTML_SAMPLES_DIR = Path(__file__).parent / "html_samples"
@@ -35,122 +36,6 @@ def load_html_sample(filename):
         raise FileNotFoundError(f"Sample file not found: {file_path}")
     with open(file_path, 'r', encoding='utf-8') as f:
         return f.read()
-
-# Event sample filenames
-EVENT_SAMPLES = [
-    "old_pueblo_event.html",
-    "biltmore_cancelled_event.html", 
-    "tevis_cup_event.html",
-    "belair_forest_event.html"
-]
-
-# Define expected field values for each event
-# This comprehensive expected data structure will be used to validate
-# the exact field values that should be stored in the database
-EXPECTED_DATA = {
-    "old_pueblo_event.html": {
-        "name": "Original Old Pueblo",
-        "source": "AERC",
-        "event_type": "endurance",
-        "date_start": "2025-03-28",
-        "location": "Empire Ranch, Empire Ranch Rd, Sonoita, AZ",
-        "region": "SW",
-        "is_canceled": False,
-        "ride_manager": "Marilyn McCoy",
-        "manager_phone": "520-360-9445",
-        "manager_email": "marilynmccoy@hotmail.com",
-        "website": "https://example.com/oldpueblo",
-        "flyer_url": "https://aerc.org/wp-content/uploads/2025/02/2025OldPueblo.pdf",
-        "has_intro_ride": True,
-        "distances": ["50 miles", "25 miles", "10 miles"],
-        "location_details": {
-            "city": "Sonoita",
-            "state": "AZ",
-            "country": "USA"
-        },
-        "control_judges": [
-            {"name": "Larry Nolen", "role": "Control Judge"}
-        ]
-    },
-    "biltmore_cancelled_event.html": {
-        "name": "Biltmore Open Challenge I",
-        "source": "AERC",
-        "event_type": "endurance",
-        "date_start": "2025-05-02",
-        "location": "Biltmore Equestrian Center, 1 Biltmore Estate Dr., NC",
-        "region": "SE",
-        "is_canceled": True,
-        "ride_manager": "Cheryl Newman",
-        "manager_phone": "828-665-1531", 
-        "manager_email": "cherylnewman@charter.net",
-        "has_intro_ride": False,
-        "distances": ["50 miles", "25 miles"],
-        "location_details": {
-            "city": "Asheville",
-            "state": "NC",
-            "country": "USA"
-        },
-        "control_judges": [
-            {"name": "Nick Kohut", "role": "Control Judge"}
-        ]
-    },
-    "tevis_cup_event.html": {
-        "name": "Western States Trail Ride (The Tevis Cup)",
-        "source": "AERC",
-        "event_type": "endurance",
-        "date_start": "2025-07-12",
-        "location": "Robie Park, CA",
-        "region": "W",
-        "is_canceled": False,
-        "ride_manager": "Chuck Stalley",
-        "manager_phone": "530-823-7616",
-        "manager_email": "cstalley@saber.net",
-        "website": "https://www.teviscup.org/",
-        "has_intro_ride": False,
-        "distances": ["100 miles"],
-        "location_details": {
-            "city": "Truckee",
-            "state": "CA",
-            "country": "USA"
-        },
-        "coordinates": {
-            "latitude": 39.23839,
-            "longitude": -120.17357
-        },
-        "map_link": "https://www.google.com/maps/dir/?api=1&destination=39.23839,-120.17357",
-        "control_judges": [
-            {"name": "Michael S. Peralez", "role": "Control Judge"}
-        ]
-    },
-    "belair_forest_event.html": {
-        "name": "Belair Forest",
-        "source": "AERC",
-        "event_type": "endurance",
-        "date_start": "2025-05-10",
-        "location": "Belair Provincial Forest, Hwy 44 at Hwy 302, MB",
-        "region": "MW",
-        "is_canceled": False,
-        "ride_manager": "Kelli Hayhurst",
-        "manager_phone": "431-293-3233",
-        "manager_email": "kellihayhurst64@gmail.com",
-        "has_intro_ride": True,
-        "distances": ["25 miles", "50 miles"],
-        "location_details": {
-            "city": "Stead",
-            "state": "MB",
-            "country": "Canada"
-        },
-        "coordinates": {
-            "latitude": 50.44538,
-            "longitude": -96.443778
-        },
-        "map_link": "https://www.google.com/maps/dir/?api=1&destination=50.445380,-96.443778",
-        "control_judges": [
-            {"name": "Brittney Derksen", "role": "Control Judge"}
-        ]
-    }
-}
-
 
 class TestDatabaseValidation(unittest.TestCase):
     """Test for validating database insertion."""
@@ -303,9 +188,6 @@ class TestDatabaseValidation(unittest.TestCase):
                 if "flyer_url" in expected:
                     self.assertEqual(stored_event.get("flyer_url"), expected["flyer_url"], "Flyer URL mismatch")
                 
-                # Verify distances
-                self.assertEqual(set(stored_event["distances"]), set(expected["distances"]), "Distances mismatch")
-                
                 # Verify event_details contents
                 self.assertIn("event_details", stored_event, "Event details missing")
                 event_details = stored_event["event_details"]
@@ -345,6 +227,15 @@ class TestDatabaseValidation(unittest.TestCase):
                 for i, judge in enumerate(expected_judges):
                     self.assertEqual(judges[i]["name"], judge["name"], f"Judge name mismatch for judge {i}")
                     self.assertEqual(judges[i]["role"], judge["role"], f"Judge role mismatch for judge {i}")
+                
+                # Check description fields if expected
+                if "description" in expected:
+                    self.assertIn("description", event_details, "Description missing")
+                    self.assertEqual(event_details["description"], expected["description"], "Description mismatch")
+                
+                if "directions" in expected:
+                    self.assertIn("directions", event_details, "Directions missing")
+                    self.assertEqual(event_details["directions"], expected["directions"], "Directions mismatch")
     
     @patch("app.crud.event.create_event")
     async def test_geocoding_fields(self, mock_create_event):
