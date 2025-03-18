@@ -129,6 +129,10 @@ class DataHandler:
                 
         if aerc_event.location.state:
             location_str += f", {aerc_event.location.state}"
+        
+        # Add country to location string if not USA
+        if aerc_event.location.country and aerc_event.location.country != "USA":
+            location_str += f", {aerc_event.location.country}"
                 
         # Format distances as strings with start time information if available
         distance_strings = []
@@ -172,6 +176,18 @@ class DataHandler:
                 'latitude': aerc_event.location.coordinates.get('latitude'),
                 'longitude': aerc_event.location.coordinates.get('longitude')
             }
+        
+        # Add location details to event_details
+        location_details = {}
+        if aerc_event.location.city:
+            location_details['city'] = aerc_event.location.city
+        if aerc_event.location.state:
+            location_details['state'] = aerc_event.location.state
+        if aerc_event.location.country:
+            location_details['country'] = aerc_event.location.country
+        
+        if location_details:
+            event_details['location_details'] = location_details
             
         # Add control judges to event_details
         control_judges = []
@@ -312,6 +328,9 @@ class DataHandler:
         city = raw_event.get('city') or location_parts.get('city')
         state = raw_event.get('state') or location_parts.get('state')
         
+        # Get country - use directly from raw_event if available, default to USA
+        country = raw_event.get('country', 'USA')
+        
         # Add coordinates if available
         coordinates = None
         if raw_event.get('coordinates'):
@@ -324,7 +343,7 @@ class DataHandler:
             name=location_name or raw_event.get('location', 'Unknown Location'),
             city=city,
             state=state,
-            country="USA",  # Default for AERC events
+            country=country,  # Use the extracted country
             coordinates=coordinates
         )
     

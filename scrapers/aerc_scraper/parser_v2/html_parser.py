@@ -150,8 +150,8 @@ class HTMLParser:
         # Check for intro ride
         has_intro_ride = self._check_has_intro_ride(row)
         
-        # Extract city and state from location
-        city, state = self._extract_city_state(location)
+        # Extract city, state, and country from location
+        city, state, country = self._extract_city_state_country(location)
         
         # Build event object with field names matching the validator's expectations
         event = {
@@ -168,11 +168,13 @@ class HTMLParser:
             'control_judges': control_judges,
         }
         
-        # Add city and state if available
+        # Add city, state, and country if available
         if city:
             event['city'] = city
         if state:
             event['state'] = state
+        if country:
+            event['country'] = country
             
         # Add coordinates if available
         if coordinates:
@@ -660,57 +662,116 @@ class HTMLParser:
         # Check text for intro keywords
         return any(keyword in text for keyword in intro_keywords)
         
-    def _extract_city_state(self, location: str) -> Tuple[Optional[str], Optional[str]]:
-        """Extract city and state from location string."""
+    def _extract_city_state_country(self, location: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Extract city, state, and country from location string."""
         if not location or location == "Unknown Location":
-            return None, None
+            return None, None, "USA"
+        
+        # Default country is USA, will be overridden if Canadian province or other identifiers are found
+        country = "USA"
+        city = None
+        state = None
             
+        # Check for Canadian provinces - both abbreviations and full names
+        canadian_provinces = {
+            'AB': 'Alberta', 'BC': 'British Columbia', 'MB': 'Manitoba', 'NB': 'New Brunswick',
+            'NL': 'Newfoundland and Labrador', 'NS': 'Nova Scotia', 'NT': 'Northwest Territories',
+            'NU': 'Nunavut', 'ON': 'Ontario', 'PE': 'Prince Edward Island', 'QC': 'Quebec',
+            'SK': 'Saskatchewan', 'YT': 'Yukon'
+        }
+        
+        # Check for Canadian indicators
+        if any(province in location for province in canadian_provinces.keys()) or \
+           any(province in location for province in canadian_provinces.values()) or \
+           'Canada' in location:
+            country = "Canada"
+        
         # Pattern 1: "City, ST" or "City, State"
-        city_state_match = re.search(r'([^,]+),\s*([A-Z]{2}|[A-Za-z\s]+)$', location)
+        city_state_match = re.search(r'([^,]+),\s*([A-Z]{2}|[A-Za-z\s]+)(?:,\s*(.+))?$', location)
         if city_state_match:
             city = city_state_match.group(1).strip()
-            state = city_state_match.group(2).strip()
+            state_or_prov = city_state_match.group(2).strip()
             
-            # If state is not 2 letters, try to normalize it
-            if len(state) > 2:
-                # This is a simple example - you might want a more comprehensive state mapping
-                state_map = {
-                    'ALABAMA': 'AL', 'ALASKA': 'AK', 'ARIZONA': 'AZ', 'ARKANSAS': 'AR',
-                    'CALIFORNIA': 'CA', 'COLORADO': 'CO', 'CONNECTICUT': 'CT', 'DELAWARE': 'DE',
-                    'FLORIDA': 'FL', 'GEORGIA': 'GA', 'HAWAII': 'HI', 'IDAHO': 'ID',
-                    'ILLINOIS': 'IL', 'INDIANA': 'IN', 'IOWA': 'IA', 'KANSAS': 'KS',
-                    'KENTUCKY': 'KY', 'LOUISIANA': 'LA', 'MAINE': 'ME', 'MARYLAND': 'MD',
-                    'MASSACHUSETTS': 'MA', 'MICHIGAN': 'MI', 'MINNESOTA': 'MN', 'MISSISSIPPI': 'MS',
-                    'MISSOURI': 'MO', 'MONTANA': 'MT', 'NEBRASKA': 'NE', 'NEVADA': 'NV',
-                    'NEW HAMPSHIRE': 'NH', 'NEW JERSEY': 'NJ', 'NEW MEXICO': 'NM', 'NEW YORK': 'NY',
-                    'NORTH CAROLINA': 'NC', 'NORTH DAKOTA': 'ND', 'OHIO': 'OH', 'OKLAHOMA': 'OK',
-                    'OREGON': 'OR', 'PENNSYLVANIA': 'PA', 'RHODE ISLAND': 'RI', 'SOUTH CAROLINA': 'SC',
-                    'SOUTH DAKOTA': 'SD', 'TENNESSEE': 'TN', 'TEXAS': 'TX', 'UTAH': 'UT',
-                    'VERMONT': 'VT', 'VIRGINIA': 'VA', 'WASHINGTON': 'WA', 'WEST VIRGINIA': 'WV',
-                    'WISCONSIN': 'WI', 'WYOMING': 'WY'
-                }
-                normalized_state = state.upper()
-                if normalized_state in state_map:
-                    state = state_map[normalized_state]
+            # If there's a third group, it might be the country
+            if city_state_match.group(3):
+                possible_country = city_state_match.group(3).strip()
+                if possible_country.lower() == 'canada':
+                    country = 'Canada'
             
-            return city, state
+            # Check if the state is a Canadian province abbreviation
+            if state_or_prov in canadian_provinces:
+                country = 'Canada'
+                state = state_or_prov
+            # If state is a longer value, check if it's a full province name
+            elif state_or_prov in canadian_provinces.values():
+                country = 'Canada'
+                # Find the abbreviation for this province
+                for abbr, full in canadian_provinces.items():
+                    if full == state_or_prov:
+                        state = abbr
+                        break
+            else:
+                state = state_or_prov
+                
+                # If state is not 2 letters, try to normalize it
+                if len(state) > 2:
+                    # This is a simple example - you might want a more comprehensive state mapping
+                    state_map = {
+                        'ALABAMA': 'AL', 'ALASKA': 'AK', 'ARIZONA': 'AZ', 'ARKANSAS': 'AR',
+                        'CALIFORNIA': 'CA', 'COLORADO': 'CO', 'CONNECTICUT': 'CT', 'DELAWARE': 'DE',
+                        'FLORIDA': 'FL', 'GEORGIA': 'GA', 'HAWAII': 'HI', 'IDAHO': 'ID',
+                        'ILLINOIS': 'IL', 'INDIANA': 'IN', 'IOWA': 'IA', 'KANSAS': 'KS',
+                        'KENTUCKY': 'KY', 'LOUISIANA': 'LA', 'MAINE': 'ME', 'MARYLAND': 'MD',
+                        'MASSACHUSETTS': 'MA', 'MICHIGAN': 'MI', 'MINNESOTA': 'MN', 'MISSISSIPPI': 'MS',
+                        'MISSOURI': 'MO', 'MONTANA': 'MT', 'NEBRASKA': 'NE', 'NEVADA': 'NV',
+                        'NEW HAMPSHIRE': 'NH', 'NEW JERSEY': 'NJ', 'NEW MEXICO': 'NM', 'NEW YORK': 'NY',
+                        'NORTH CAROLINA': 'NC', 'NORTH DAKOTA': 'ND', 'OHIO': 'OH', 'OKLAHOMA': 'OK',
+                        'OREGON': 'OR', 'PENNSYLVANIA': 'PA', 'RHODE ISLAND': 'RI', 'SOUTH CAROLINA': 'SC',
+                        'SOUTH DAKOTA': 'SD', 'TENNESSEE': 'TN', 'TEXAS': 'TX', 'UTAH': 'UT',
+                        'VERMONT': 'VT', 'VIRGINIA': 'VA', 'WASHINGTON': 'WA', 'WEST VIRGINIA': 'WV',
+                        'WISCONSIN': 'WI', 'WYOMING': 'WY'
+                    }
+                    normalized_state = state.upper()
+                    if normalized_state in state_map:
+                        state = state_map[normalized_state]
             
-        # Pattern 2: Try to find city and state in other formats
-        # This is more complex and might require more sophisticated NLP
-        # For now, we'll use a simple approach
+            return city, state, country
         
-        # Try to find a state abbreviation
-        state_match = re.search(r'([A-Z]{2})\b', location)
-        if state_match:
-            state = state_match.group(1)
-            # Try to extract city before the state
-            city_match = re.search(r'([A-Za-z\s]+)\s+' + re.escape(state), location)
-            if city_match:
-                city = city_match.group(1).strip()
-                return city, state
+        # Pattern 2: Try to find location name followed by city, state
+        location_parts = location.split(',')
+        if len(location_parts) >= 2:
+            # Last part might be state or "state country"
+            last_part = location_parts[-1].strip()
+            
+            # Check if it contains state and country
+            state_country_match = re.search(r'([A-Z]{2})\s+(.+)$', last_part)
+            if state_country_match:
+                state = state_country_match.group(1)
+                possible_country = state_country_match.group(2).strip()
+                if possible_country.lower() == 'canada':
+                    country = 'Canada'
+            else:
+                # Just a state
+                state = last_part
+                
+            # Second to last part might be city
+            if len(location_parts) >= 2:
+                city = location_parts[-2].strip()
         
-        # If we can't confidently extract both city and state, return None
-        return None, None
+        # If state contains "MB" or other Canadian province codes, set country to Canada
+        if state in canadian_provinces:
+            country = 'Canada'
+            
+        # Special check for Canadian content in description
+        if state and city and re.search(r'\b(MB|AB|BC|SK|ON|QC|NB|NS|PE|NL|YT|NT|NU)\b', location):
+            country = 'Canada'
+            
+        return city, state, country
+        
+    def _extract_city_state(self, location: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract city and state from location string (backward compatibility)."""
+        city, state, _ = self._extract_city_state_country(location)
+        return city, state
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get parser metrics."""
