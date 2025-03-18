@@ -7,7 +7,7 @@
 DOCKER_COMPOSE := docker-compose
 PROJECT_NAME := trailblaze
 
-.PHONY: help build up down restart status logs test test-api test-unit test-integration test-scraper check-db clean docs version check-env health setup-local setup-test-db clean-test-db test-sequential enrich-geocode enrich-website test-aerc-scraper test-aerc-specific test-aerc-parser test-aerc-integration test-aerc-db-validation
+.PHONY: help build up down restart status logs test test-api test-unit test-integration test-scraper check-db clean docs version check-env health setup-local setup-test-db clean-test-db test-sequential enrich-geocode enrich-website test-aerc-scraper test-aerc-specific test-aerc-parser test-aerc-database
 
 # Colors for terminal output
 GREEN := \033[0;32m
@@ -54,7 +54,7 @@ logs-%: ## View logs from a specific service (e.g. make logs-api)
 shell-%: ## Open a shell in a specific service (e.g. make shell-api)
 	$(DOCKER_COMPOSE) exec $* bash
 
-db-shell: ## Open a PostgreSQL shell
+db-shell: ## Open a PostgreSQL interactive shell. Note: Use docker-compose directly to run direct commands on the database and pipe to cat to see the output.
 	$(DOCKER_COMPOSE) exec db psql -U postgres -d $(PROJECT_NAME)
 
 # Clean Test Database
@@ -171,29 +171,17 @@ test-aerc-parser: setup-test-db ## Run AERC parser validation tests
 		test python -m scrapers.aerc_scraper.tests.test_parser_with_samples
 	@echo "${GREEN}✅ AERC parser validation tests complete!${NC}"
 
-test-aerc-integration: setup-test-db ## Run AERC integration tests
-	@echo "${BLUE}🔄 Running AERC integration tests...${NC}"
-	$(DOCKER_COMPOSE) run --rm \
+test-aerc-database: clean-test-db setup-test-db
+	@echo "💾 Running AERC database integration tests... "
+	@docker-compose run --rm \
 		-e PYTHONPATH=/app \
 		-e AERC_GEMINI_API_KEY=test_key \
 		-e AERC_DEBUG_MODE=true \
 		-e AERC_REFRESH_CACHE=true \
 		-e AERC_VALIDATE=true \
 		-e LOG_LEVEL=DEBUG \
-		test python -m scrapers.aerc_scraper.tests.test_database_integration
-	@echo "${GREEN}✅ AERC integration tests complete!${NC}"
-
-test-aerc-db-validation: setup-test-db ## Run AERC database validation tests
-	@echo "${BLUE}💾 Running AERC scraper database validation tests...${NC}"
-	$(DOCKER_COMPOSE) run --rm \
-		-e PYTHONPATH=/app \
-		-e AERC_GEMINI_API_KEY=test_key \
-		-e AERC_DEBUG_MODE=true \
-		-e AERC_REFRESH_CACHE=true \
-		-e AERC_VALIDATE=true \
-		-e LOG_LEVEL=DEBUG \
-		test python -m scrapers.aerc_scraper.tests.run_database_validation
-	@echo "${GREEN}✅ AERC database validation tests complete!${NC}"
+		test python -m scrapers.aerc_scraper.tests.run_html_to_database_test
+	@echo "✅ Tests completed"
 
 # Database Commands
 check-db: ## Check database connectivity

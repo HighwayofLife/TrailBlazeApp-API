@@ -69,3 +69,20 @@
 - **Fixed Schema Validation**:
     - Updated schema tests to correctly validate the `location` field as a string.
     - Explicitly set `is_multi_day_event`, `is_pioneer_ride`, and `ride_days` flags in tests to ensure correct validation.
+
+### Migration to Pytest
+
+- **Migrated Test Framework**: Converted all tests in the `scrapers/aerc_scraper/tests` directory from `unittest` to `pytest` for improved test management and reporting.
+- **Updated Test Runner**: Refactored `run_tests.py` to utilize pytest's test discovery and execution capabilities, allowing for more flexible test runs.
+- **Consolidated Fixtures**: Created a `conftest.py` file to define common fixtures used across multiple test files, promoting code reuse and reducing redundancy.
+- **Enhanced Test Output**: Improved the output of test runs to provide clearer information about which tests are being executed and their results.
+
+### Bug Fixes and Improvements
+
+- **Fixed Linter Errors**: Addressed linter errors related to missing imports for pytest and SQLAlchemy in the test files.
+- **Improved Test Robustness**: Enhanced existing tests to handle variations in data formats and ensure compatibility with the latest schema changes.
+- **Updated Test Assertions**: Modified assertions in tests to align with the new data structures and validation logic introduced in the recent schema refactoring.
+
+### General Improvements
+
+- **Enhanced Documentation**: Updated documentation for tests to reflect the new pytest structure and usage.

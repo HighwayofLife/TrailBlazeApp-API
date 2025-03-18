@@ -4,7 +4,7 @@ Test runner for AERC scraper tests.
 This script discovers and runs all tests in the tests directory.
 """
 
-import unittest
+import pytest
 import sys
 import os
 import time
@@ -15,7 +15,7 @@ project_root = str(Path(__file__).parents[3])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-def run_tests(test_path=None, verbosity=2):
+def run_tests(test_path=None, verbosity=None):
     """
     Run all tests in the specified path, or current directory if None.
     
@@ -34,15 +34,13 @@ def run_tests(test_path=None, verbosity=2):
     
     # List of test modules to prioritize in the display
     important_tests = [
-        "test_parser_with_samples.py",  # New consolidated HTML parser test (highest priority)
-        "test_special_cases.py",        # Special cases tests (flyer links, cancelled events, coordinates)
-        "test_html_parser.py",          # Original HTML parser tests
-        "test_distance_handling.py",    # Distance handling tests
-        "test_database_insertion.py",   # Database tests
-        "test_utils.py",                # Utility function tests
-        "test_data_handler.py",         # Data transformation tests
-        "test_database_integration.py", # Integration tests
-        "test_database_validation.py"   # Validation tests
+        "test_html_to_database_integration.py", # Comprehensive HTML-to-database pipeline test (highest priority)
+        "test_parser_with_samples.py",          # HTML parser test with real samples
+        "test_special_cases.py",                # Special cases tests
+        "test_html_parser.py",                  # Basic HTML parser tests
+        "test_distance_handling.py",            # Distance handling tests
+        "test_data_handler.py",                 # Data transformation tests
+        "test_utils.py",                        # Utility function tests
     ]
     
     # Find all test modules in the test directory
@@ -58,40 +56,53 @@ def run_tests(test_path=None, verbosity=2):
     # Remove duplicates while preserving order
     test_files = list(dict.fromkeys(test_files))
     
-    # Count total tests and print information
-    total_tests = 0
-    print("\n📋 Test discovery:")
+    # List available test files
+    print("\n📋 Available test files:")
     for file in test_files:
-        test_loader = unittest.TestLoader()
-        tests = test_loader.discover(test_path, pattern=file)
-        test_count = tests.countTestCases()
-        if test_count > 0:
-            emoji = "🔍"
-            if "parser" in file:
-                emoji = "🔎"
-            elif "database" in file:
-                emoji = "💾"
-            elif "distance" in file:
-                emoji = "📏"
-            elif "utils" in file:
-                emoji = "🛠️"
-            elif "handler" in file:
-                emoji = "🧰"
-            print(f"  {emoji} Found {test_count} tests in {file}")
-            total_tests += test_count
+        category = "Other"
+        emoji = "🔍"
+        
+        if "html_to_database" in file:
+            category = "Database Pipeline"
+            emoji = "🔄"
+        elif "parser" in file:
+            category = "HTML Parsing"
+            emoji = "🔎"
+        elif "database" in file:
+            category = "Database"
+            emoji = "💾"
+        elif "distance" in file:
+            category = "Data Processing"
+            emoji = "📏"
+        elif "utils" in file:
+            category = "Utilities"
+            emoji = "🛠️"
+        elif "handler" in file or "data" in file:
+            category = "Data Transformation"
+            emoji = "🧰"
+        
+        print(f"  {emoji} [{category:18}] {file}")
     
-    print(f"\n🚀 Running {total_tests} total tests\n")
+    print(f"\n🚀 Running tests from {test_path}\n")
     print("-" * 80)
     
     # Start time
     start_time = time.time()
     
-    # Create and run a test suite with all tests
-    loader = unittest.TestLoader()
-    suite = loader.discover(test_path, pattern="test_*.py")
+    # Build pytest arguments
+    pytest_args = [test_path]
     
-    runner = unittest.TextTestRunner(verbosity=verbosity)
-    results = runner.run(suite)
+    # Add verbosity
+    if verbosity:
+        if verbosity == 2:
+            pytest_args.append("-v")
+        elif verbosity > 2:
+            pytest_args.append("-vv")
+    else:
+        pytest_args.append("-v")
+    
+    # Run tests with pytest
+    result = pytest.main(pytest_args)
     
     # End time
     end_time = time.time()
@@ -101,31 +112,15 @@ def run_tests(test_path=None, verbosity=2):
     print("-" * 80)
     print("📊 Test Results Summary:")
     print(f"  ⏱️  Time: {duration:.2f} seconds")
-    print(f"  🧪 Tests run: {results.testsRun}")
-    
-    if len(results.errors) > 0:
-        print(f"  ❌ Errors: {len(results.errors)}")
-    else:
-        print(f"  ✅ Errors: {len(results.errors)}")
-        
-    if len(results.failures) > 0:
-        print(f"  ❌ Failures: {len(results.failures)}")
-    else:
-        print(f"  ✅ Failures: {len(results.failures)}")
-        
-    if len(results.skipped) > 0:
-        print(f"  ⏭️ Skipped: {len(results.skipped)}")
-    else:
-        print(f"  🔄 Skipped: {len(results.skipped)}")
     
     # Final result
-    if results.wasSuccessful():
+    if result == 0:
         print("\n🎉 All tests passed successfully! 🎉")
     else:
         print("\n⚠️  Some tests failed. Please check the errors above. ⚠️")
     
     # Return appropriate exit code
-    return 0 if results.wasSuccessful() else 1
+    return result
 
 if __name__ == "__main__":
     # Use command line arguments for test path if provided
