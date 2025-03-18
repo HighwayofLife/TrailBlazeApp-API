@@ -4,10 +4,11 @@ Convert validated event data to database schema.
 
 import logging
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from app.schemas.event import EventCreate
 from .exceptions import DataExtractionError
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -27,21 +28,42 @@ class DataConverter:
                 # Debug output
                 logger.debug(f"Converting event: {json.dumps(event, indent=2, default=str)}")
                 
-                # Format distances list with better error handling
+                # Extract distances with better handling for different structures
                 distances = []
-                if event.get('distances'):
-                    if isinstance(event['distances'], list):
-                        for d in event['distances']:
-                            if isinstance(d, dict) and d.get('distance'):
-                                distances.append(d.get('distance'))
-                            elif isinstance(d, str):
-                                distances.append(d)
-                    elif isinstance(event['distances'], str):
-                        # Handle case where distances is a single string
-                        distances = [event['distances']]
+                if event.get('distances') and isinstance(event['distances'], list):
+                    for dist in event['distances']:
+                        if isinstance(dist, dict):
+                            if dist.get('length') and dist.get('unit'):
+                                try:
+                                    value = float(dist['length'])
+                                    unit = dist['unit'].lower()
+                                    distances.append({
+                                        'value': value,
+                                        'unit': unit,
+                                        'type': dist.get('type', 'endurance')
+                                    })
+                                except (ValueError, TypeError):
+                                    pass
+                        elif isinstance(dist, str) and dist:
+                            # Try to parse string-format distance like "50 miles"
+                            match = re.search(r'(\d+(?:\.\d+)?)\s*(mi|km|mile|miles|kilometer|kilometers)', dist, re.IGNORECASE)
+                            if match:
+                                value = float(match.group(1))
+                                unit = match.group(2).lower()
+                                if unit in ('mile', 'miles', 'mi'):
+                                    unit = 'mi'
+                                elif unit in ('kilometer', 'kilometers', 'km'):
+                                    unit = 'km'
+                                
+                                distances.append({
+                                    'value': value,
+                                    'unit': unit,
+                                    'type': 'endurance'
+                                })
                 
-                # Get event start and end date with better error handling
+                # Handle date logic with better parsing
                 date_start = None
+                
                 # Try to get date from the already-transformed field name
                 if event.get('date_start'):
                     if isinstance(event['date_start'], datetime):
@@ -103,42 +125,46 @@ class DataConverter:
                 
                 # Extract location with flexible field mapping
                 location = "Unknown Location"
+                
+                # Try different possible field names for location
                 if event.get('location'):
-                    if isinstance(event['location'], dict):
-                        # Handle structured location data
-                        loc_parts = []
-                        if event['location'].get('name'):
-                            loc_parts.append(event['location']['name'])
-                        if event['location'].get('city'):
-                            loc_parts.append(event['location']['city'])
-                        if event['location'].get('state'):
-                            loc_parts.append(event['location']['state'])
-                        location = ", ".join(loc_parts)
-                    else:
-                        location = event['location']
+                    location = self._ensure_string(event['location'])
+                elif event.get('city') and event.get('state'):
+                    location = f"{event['city']}, {event['state']}"
+                    if event.get('country'):
+                        location += f", {event['country']}"
+                elif event.get('venue'):
+                    location = event['venue']
                 
-                # Format contact information
+                # Ensure we have a fallback
+                location = location or "Unknown Location"
+                
+                # Compile contact info
                 contact_info = []
-                # Try both ride_manager and rideManager fields
-                if event.get('ride_manager'):
-                    contact_info.append(f"Ride Manager: {event['ride_manager']}")
-                elif event.get('rideManager'):
-                    contact_info.append(f"Ride Manager: {event['rideManager']}")
                 
-                # Check for manager contact information from different possible fields
-                if event.get('manager_contact'):
-                    contact_info.append(event['manager_contact'])
-                elif event.get('rideManagerContact'):
-                    contact = event['rideManagerContact']
-                    if isinstance(contact, dict):
-                        if contact.get('phone'):
-                            contact_info.append(f"Phone: {contact['phone']}")
-                        if contact.get('email'):
-                            contact_info.append(f"Email: {contact['email']}")
+                # Extract ride manager with fallback
+                rm_name = event.get('ride_manager') or event.get('rideManager') or event.get('manager')
+                if rm_name:
+                    contact_info.append(f"Ride Manager: {rm_name}")
                 
-                # Add individual contact fields if they exist
+                # Extract contact details with fallback field names
+                if event.get('ride_manager_contact') and isinstance(event['ride_manager_contact'], dict):
+                    rm_contact = event['ride_manager_contact']
+                    if rm_contact.get('email'):
+                        contact_info.append(f"Email: {rm_contact['email']}")
+                    if rm_contact.get('phone'):
+                        contact_info.append(f"Phone: {rm_contact['phone']}")
+                elif event.get('rideManagerContact') and isinstance(event['rideManagerContact'], dict):
+                    rm_contact = event['rideManagerContact']
+                    if rm_contact.get('email'):
+                        contact_info.append(f"Email: {rm_contact['email']}")
+                    if rm_contact.get('phone'):
+                        contact_info.append(f"Phone: {rm_contact['phone']}")
+                
+                # Direct contact fields
                 if event.get('manager_email'):
                     contact_info.append(f"Email: {event['manager_email']}")
+                
                 if event.get('manager_phone'):
                     contact_info.append(f"Phone: {event['manager_phone']}")
                 
@@ -162,6 +188,11 @@ class DataConverter:
                 elif event.get('rideName'):
                     name = event['rideName']
                 
+                # Ensure URL fields are strings, not URL objects
+                website = self._ensure_string(event.get('website'))
+                flyer_url = self._ensure_string(event.get('flyerUrl') or event.get('flyer_url'))
+                map_link = self._ensure_string(event.get('mapLink') or event.get('map_url') or event.get('map_link'))
+                
                 # Create event object - protect against type errors with better handling
                 try:
                     db_event = EventCreate(
@@ -174,7 +205,9 @@ class DataConverter:
                         description="\n".join(contact_info) if contact_info else None,
                         additional_info="\n".join(judges) if judges else None,
                         distances=distances,
-                        map_url=event.get('map_url') or event.get('mapLink'),
+                        website=website,
+                        flyer_url=flyer_url,
+                        map_link=map_link,
                         has_intro_ride=bool(event.get('has_intro_ride', False)) or bool(event.get('hasIntroRide', False)),
                         external_id=str(event.get('external_id') or event.get('tag') or "") or None,
                         source='AERC',
@@ -206,8 +239,49 @@ class DataConverter:
         self.db_events = db_events
         return db_events
     
+    def _ensure_string(self, value: Any) -> Optional[str]:
+        """Convert value to string if possible, handling URL objects and dictionaries."""
+        if value is None:
+            return None
+        
+        # For dictionary objects that represent locations
+        if isinstance(value, dict):
+            # Try to extract location information from dictionary
+            parts = []
+            # Common fields in location dictionaries
+            for field in ['name', 'venue', 'city', 'state', 'country', 'address']:
+                if value.get(field):
+                    if isinstance(value[field], str):
+                        parts.append(value[field])
+            
+            if parts:
+                return ", ".join(parts)
+            else:
+                return "Unknown Location"
+            
+        # Check if it's a URL-like object with a string representation
+        if hasattr(value, 'url') and callable(getattr(value, 'url')):
+            # For objects with a url() method
+            return str(value.url())
+        
+        # For objects with a __str__ method that contains the URL
+        try:
+            url_str = str(value)
+            # Extract URL from string like "Url('https://example.com')"
+            if url_str.startswith("Url('") and url_str.endswith("')"):
+                return url_str[5:-2]  # Remove Url(' and ')
+            return url_str
+        except Exception:
+            return None
+    
     def get_metrics(self) -> dict:
         """Get conversion metrics."""
         return {
             'total_converted': len(self.db_events) if hasattr(self, 'db_events') else 0
         }
+    def debug_map_link(self, events: List[Dict[str, Any]]) -> None:
+        """Debug map link values in events."""
+        import logging
+        logger = logging.getLogger(__name__)
+        for i, event in enumerate(events[:5]):
+            logger.critical(f"Event {i+1} map_link: {event.get("map_link")}")

@@ -40,6 +40,13 @@ class DataValidator:
         
         for event_data in events:
             try:
+                # Log the event data for debugging
+                if self.debug_mode:
+                    logger.debug(f"Validating event: {event_data.get('name', 'Unknown')}")
+                    logger.debug(f"Event data keys: {list(event_data.keys())}")
+                    logger.debug(f"date_start: {event_data.get('date_start')}")
+                    logger.debug(f"location: {event_data.get('location')}")
+                
                 # Store the original data for potential retry
                 original_data = event_data.copy()
                 
@@ -68,9 +75,17 @@ class DataValidator:
                         event_data.get('date_start')
                     )
                 
+                # Handle URL fields to match the schema
+                self._map_url_fields(event_data)
+                
                 # Validate against schema
                 validated_event = validate_event(event_data, EventSourceEnum.AERC)
-                valid_events.append(validated_event.model_dump())
+                valid_event_data = validated_event.model_dump()
+                
+                # Map URL fields back to the original field names for database compatibility
+                self._map_url_fields_back(valid_event_data)
+                
+                valid_events.append(valid_event_data)
                 self.metrics['validated'] += 1
                 
             except (ValidationError, ValueError, ScraperValidationError) as e:
@@ -120,6 +135,32 @@ class DataValidator:
             logger.info(f"Validated {len(valid_events)} events")
         
         return valid_events
+    
+    def _map_url_fields(self, event_data: Dict[str, Any]) -> None:
+        """Map URL fields from parser names to schema names."""
+        # Map from parser field names to schema field names
+        if 'website' in event_data:
+            event_data['website_url'] = event_data.pop('website')
+        
+        if 'flyer_url' in event_data:
+            event_data['registration_url'] = event_data.pop('flyer_url')
+            
+        # Keep the map_link field if it exists (we'll add it back later)
+        if 'map_link' in event_data:
+            event_data['_map_link'] = event_data.pop('map_link')
+    
+    def _map_url_fields_back(self, event_data: Dict[str, Any]) -> None:
+        """Map URL fields from schema names back to parser/database names."""
+        # Map from schema field names to database field names
+        if 'website_url' in event_data:
+            event_data['website'] = event_data.pop('website_url')
+        
+        if 'registration_url' in event_data:
+            event_data['flyer_url'] = event_data.pop('registration_url')
+            
+        # Restore map_link if it was saved
+        if '_map_link' in event_data:
+            event_data['map_link'] = event_data.pop('_map_link')
     
     def _check_required_fields(self, event_data: Dict[str, Any]) -> None:
         """Check required fields are present."""

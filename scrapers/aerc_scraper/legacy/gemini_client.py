@@ -81,6 +81,11 @@ class GeminiClient:
         - "date": The event start date in YYYY-MM-DD format (MUST not be empty)
         - "location": The physical location of the event (MUST not be empty)
 
+        LINK EXTRACTION (Pay special attention to these):
+        - "website": Extract ANY links labeled "Website", "Event Website", "Details" or similar
+        - "flyerUrl": Extract ANY links to PDFs, especially labeled "Entry", "Flyer", "Form" or similar
+        - "mapLink": Extract ANY Google Maps links, directions links, or links labeled "Map", "Directions", "Location"
+
         JSON Structure:
         [
           {{
@@ -107,7 +112,9 @@ class GeminiClient:
                 "name": "judge name"
               }}
             ],
-            "mapLink": "Google Maps URL",
+            "mapLink": "Google Maps URL", // IMPORTANT: Extract any map or directions links
+            "website": "Event website URL", // IMPORTANT: Extract any website links
+            "flyerUrl": "PDF flyer URL", // IMPORTANT: Extract any PDF or flyer links
             "hasIntroRide": boolean
           }}
         ]
@@ -119,6 +126,10 @@ class GeminiClient:
         4. Extract every event you can find in the HTML
         5. Every event must be a complete object, even if some fields are missing
         6. If an event seems to have multiple days, include each day as a separate distance item
+        7. ALWAYS extract website, flyerUrl, and mapLink if present (look carefully in the HTML)
+        8. Look for website links - typically labeled as "Website" in the HTML
+        9. Look for flyer links - PDF files that might be labeled as "Entry/Flyer" or similar
+        10. Look for map links - typically Google Maps links or links labeled as "Directions"
 
         Calendar HTML:
         {chunk}
@@ -166,7 +177,9 @@ class GeminiClient:
                             }
                         }
                     },
-                    "mapLink": {"type": "STRING", "description": "Google Maps URL"},
+                    "mapLink": {"type": "STRING", "description": "Google Maps URL or any directions link - IMPORTANT to extract"},
+                    "website": {"type": "STRING", "description": "Event website URL or any web link - IMPORTANT to extract"},
+                    "flyerUrl": {"type": "STRING", "description": "PDF flyer URL or any entry form link - IMPORTANT to extract"},
                     "hasIntroRide": {"type": "BOOLEAN", "description": "Whether the event has an introductory ride"},
                     "is_canceled": {"type": "BOOLEAN", "description": "Whether the event has been canceled"}
                 },
@@ -184,6 +197,10 @@ class GeminiClient:
         3. All dates must be in YYYY-MM-DD format (example: 2024-06-15).
         4. Extract every event you can find, even if some are partial.
         5. If an event has multiple days, include each day as a separate distance.
+        6. CAREFULLY LOOK FOR AND EXTRACT ALL LINKS - especially:
+           - website: Any link labeled "Website", "Event Website", or similar
+           - flyerUrl: Any PDF links or links labeled "Entry", "Flyer", etc.
+           - mapLink: Any Google Maps links or links labeled "Directions", "Map", etc.
         
         If the HTML chunk is incomplete or cut off, just extract what you can see.
         
@@ -1022,6 +1039,8 @@ class GeminiClient:
                 map_url = event.get('mapLink') or event.get('mapUrl')
                 has_intro_ride = event.get('hasIntroRide', False) or event.get('introRide', False)
                 external_id = str(event.get('tag') or event.get('id') or event.get('external_id') or "")
+                website = event.get('website') or event.get('eventWebsite') or ""
+                flyer_url = event.get('flyerUrl') or event.get('entryFlyer') or ""
                 
                 # Create mapped event
                 mapped_event = {
@@ -1040,7 +1059,9 @@ class GeminiClient:
                     'external_id': external_id if external_id else None,
                     'event_type': 'endurance',
                     'source': 'AERC',
-                    'is_canceled': is_canceled
+                    'is_canceled': is_canceled,
+                    'website': website,
+                    'flyer_url': flyer_url
                 }
                 
                 # Add end date if available
