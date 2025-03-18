@@ -7,8 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models.events import Event, EventDistance, EventContact
-from app.models.locations import Location
+from app.models.event import Event
 from scrapers.database import DatabaseHandler
 from scrapers.exceptions import DatabaseError
 

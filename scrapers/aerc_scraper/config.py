@@ -2,7 +2,7 @@
 from functools import lru_cache
 from typing import Dict, Any
 from pydantic_settings import BaseSettings
-from ..config import ScraperBaseSettings, ScraperSettings
+from scrapers.config import ScraperBaseSettings, ScraperSettings
 
 # Alias for backward compatibility
 ScraperSettings = ScraperBaseSettings
@@ -16,6 +16,9 @@ class AERCScraperSettings(ScraperSettings):
     fallback_model: str = "gemini-2.0-flash"
     temperature: float = 0.1
     max_output_tokens: int = 8192
+    
+    # Use AI for extraction (set to False to use only HTML parser)
+    use_ai_extraction: bool = False
     
     # Network settings
     request_timeout: int = 30

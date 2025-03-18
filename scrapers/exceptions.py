@@ -39,3 +39,7 @@ class AIError(ScraperError):
 class DataExtractionError(ScraperError):
     """Raised when data extraction operations fail."""
     pass
+
+class ChunkingError(ScraperError):
+    """Raised when HTML chunking operations fail."""
+    pass

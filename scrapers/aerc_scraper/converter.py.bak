@@ -1,0 +1,281 @@
+"""
+Convert validated event data to database schema.
+"""
+
+import logging
+import json
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+from app.schemas.event import EventCreate
+from .exceptions import DataExtractionError
+import re
+
+logger = logging.getLogger(__name__)
+
+class DataConverter:
+    """Converts extracted event data to database schema."""
+    
+    def convert_to_db_events(self, events: List[Dict[str, Any]]) -> List[EventCreate]:
+        """Convert validated event data to database event schema."""
+        db_events = []
+        metrics = {
+            'converted': 0,
+            'conversion_errors': 0
+        }
+        
+        for event in events:
+            try:
+                # Debug output
+                logger.debug(f"Converting event: {json.dumps(event, indent=2, default=str)}")
+                
+                # Extract distances with better handling for different structures
+                distances = []
+                if event.get('distances') and isinstance(event['distances'], list):
+                    for dist in event['distances']:
+                        if isinstance(dist, dict):
+                            if dist.get('length') and dist.get('unit'):
+                                try:
+                                    value = float(dist['length'])
+                                    unit = dist['unit'].lower()
+                                    distances.append({
+                                        'value': value,
+                                        'unit': unit,
+                                        'type': dist.get('type', 'endurance')
+                                    })
+                                except (ValueError, TypeError):
+                                    pass
+                        elif isinstance(dist, str) and dist:
+                            # Try to parse string-format distance like "50 miles"
+                            match = re.search(r'(\d+(?:\.\d+)?)\s*(mi|km|mile|miles|kilometer|kilometers)', dist, re.IGNORECASE)
+                            if match:
+                                value = float(match.group(1))
+                                unit = match.group(2).lower()
+                                if unit in ('mile', 'miles', 'mi'):
+                                    unit = 'mi'
+                                elif unit in ('kilometer', 'kilometers', 'km'):
+                                    unit = 'km'
+                                
+                                distances.append({
+                                    'value': value,
+                                    'unit': unit,
+                                    'type': 'endurance'
+                                })
+                
+                # Handle date logic with better parsing
+                date_start = None
+                
+                # Try to get date from the already-transformed field name
+                if event.get('date_start'):
+                    if isinstance(event['date_start'], datetime):
+                        date_start = event['date_start']
+                    else:
+                        try:
+                            date_start = datetime.strptime(event['date_start'], "%Y-%m-%d")
+                        except ValueError:
+                            try:
+                                # Try alternative formats
+                                date_start = datetime.strptime(event['date_start'], "%m/%d/%Y")
+                            except ValueError:
+                                logger.error(f"Could not parse date_start: {event['date_start']}")
+                # Fallback to 'date' field
+                elif event.get('date'):
+                    if isinstance(event['date'], datetime):
+                        date_start = event['date']
+                    else:
+                        try:
+                            date_start = datetime.strptime(event['date'], "%Y-%m-%d")
+                        except ValueError:
+                            try:
+                                # Try alternative formats
+                                date_start = datetime.strptime(event['date'], "%m/%d/%Y")
+                            except ValueError:
+                                logger.error(f"Could not parse date: {event['date']}")
+                
+                # Set default date if missing
+                if not date_start:
+                    date_start = datetime.now()
+                    logger.warning(f"Missing start date, using current date: {date_start}")
+                
+                date_end = date_start
+                
+                # If multiple days, find the latest date
+                if event.get('date_end'):
+                    # If date_end already exists, use it
+                    if isinstance(event['date_end'], datetime):
+                        date_end = event['date_end']
+                    else:
+                        try:
+                            date_end = datetime.strptime(event['date_end'], "%Y-%m-%d")
+                        except (ValueError, TypeError):
+                            logger.error(f"Could not parse date_end: {event['date_end']}")
+                elif event.get('distances') and isinstance(event['distances'], list):
+                    for distance in event['distances']:
+                        if isinstance(distance, dict) and distance.get('date'):
+                            try:
+                                distance_date = None
+                                if isinstance(distance['date'], datetime):
+                                    distance_date = distance['date']
+                                else:
+                                    distance_date = datetime.strptime(distance['date'], '%Y-%m-%d')
+                                
+                                if distance_date and (date_end is None or distance_date > date_end):
+                                    date_end = distance_date
+                            except (ValueError, TypeError):
+                                continue
+                
+                # Extract location with flexible field mapping
+                location = "Unknown Location"
+                
+                # Try different possible field names for location
+                if event.get('location'):
+                    location = self._ensure_string(event['location'])
+                elif event.get('city') and event.get('state'):
+                    location = f"{event['city']}, {event['state']}"
+                    if event.get('country'):
+                        location += f", {event['country']}"
+                elif event.get('venue'):
+                    location = event['venue']
+                
+                # Ensure we have a fallback
+                location = location or "Unknown Location"
+                
+                # Compile contact info
+                contact_info = []
+                
+                # Extract ride manager with fallback
+                rm_name = event.get('ride_manager') or event.get('rideManager') or event.get('manager')
+                if rm_name:
+                    contact_info.append(f"Ride Manager: {rm_name}")
+                
+                # Extract contact details with fallback field names
+                if event.get('ride_manager_contact') and isinstance(event['ride_manager_contact'], dict):
+                    rm_contact = event['ride_manager_contact']
+                    if rm_contact.get('email'):
+                        contact_info.append(f"Email: {rm_contact['email']}")
+                    if rm_contact.get('phone'):
+                        contact_info.append(f"Phone: {rm_contact['phone']}")
+                elif event.get('rideManagerContact') and isinstance(event['rideManagerContact'], dict):
+                    rm_contact = event['rideManagerContact']
+                    if rm_contact.get('email'):
+                        contact_info.append(f"Email: {rm_contact['email']}")
+                    if rm_contact.get('phone'):
+                        contact_info.append(f"Phone: {rm_contact['phone']}")
+                
+                # Direct contact fields
+                if event.get('manager_email'):
+                    contact_info.append(f"Email: {event['manager_email']}")
+                
+                if event.get('manager_phone'):
+                    contact_info.append(f"Phone: {event['manager_phone']}")
+                
+                # Format control judges with good fallback handling
+                judges = []
+                # Try different possible field names
+                if event.get('judges') and isinstance(event['judges'], list):
+                    judges = event['judges']
+                elif event.get('controlJudges') and isinstance(event['controlJudges'], list):
+                    for judge in event['controlJudges']:
+                        if isinstance(judge, dict) and judge.get('name'):
+                            role = judge.get('role', 'Judge')
+                            judges.append(f"{role}: {judge['name']}")
+                        elif isinstance(judge, str):
+                            judges.append(judge)
+                
+                # Get event name with fallbacks
+                name = "Unnamed AERC Event"
+                if event.get('name'):
+                    name = event['name']
+                elif event.get('rideName'):
+                    name = event['rideName']
+                
+                # Ensure URL fields are strings, not URL objects
+                website = self._ensure_string(event.get('website'))
+                flyer_url = self._ensure_string(event.get('flyerUrl') or event.get('flyer_url'))
+                map_link = self._ensure_string(event.get('mapLink') or event.get('map_url') or event.get('map_link'))
+                
+                # Create event object - protect against type errors with better handling
+                try:
+                    db_event = EventCreate(
+                        name=name,
+                        date_start=date_start,
+                        date_end=date_end,
+                        location=location,
+                        region=event.get('region', 'Unknown'),
+                        event_type='endurance',
+                        description="\n".join(contact_info) if contact_info else None,
+                        additional_info="\n".join(judges) if judges else None,
+                        distances=distances,
+                        website=website,
+                        flyer_url=flyer_url,
+                        map_link=map_link,
+                        has_intro_ride=bool(event.get('has_intro_ride', False)) or bool(event.get('hasIntroRide', False)),
+                        external_id=str(event.get('external_id') or event.get('tag') or "") or None,
+                        source='AERC',
+                        is_canceled=bool(event.get('is_canceled', False))
+                    )
+                    
+                    db_events.append(db_event)
+                    metrics['converted'] += 1
+                    
+                except Exception as e:
+                    metrics['conversion_errors'] += 1
+                    logger.error(f"Error creating EventCreate object: {e}")
+                    continue
+                
+            except Exception as e:
+                metrics['conversion_errors'] += 1
+                logger.error(f"Error converting event to DB schema: {e}")
+                # Add the event data to the error log
+                logger.error(f"Event data causing error: {json.dumps(event, indent=2, default=str) if event else 'None'}")
+                continue
+        
+        if metrics['conversion_errors'] > 0:
+            logger.warning(
+                f"Converted {metrics['converted']} events with {metrics['conversion_errors']} errors"
+            )
+        else:
+            logger.info(f"Successfully converted {metrics['converted']} events")
+        
+        self.db_events = db_events
+        return db_events
+    
+    def _ensure_string(self, value: Any) -> Optional[str]:
+        """Convert value to string if possible, handling URL objects and dictionaries."""
+        if value is None:
+            return None
+        
+        # For dictionary objects that represent locations
+        if isinstance(value, dict):
+            # Try to extract location information from dictionary
+            parts = []
+            # Common fields in location dictionaries
+            for field in ['name', 'venue', 'city', 'state', 'country', 'address']:
+                if value.get(field):
+                    if isinstance(value[field], str):
+                        parts.append(value[field])
+            
+            if parts:
+                return ", ".join(parts)
+            else:
+                return "Unknown Location"
+            
+        # Check if it's a URL-like object with a string representation
+        if hasattr(value, 'url') and callable(getattr(value, 'url')):
+            # For objects with a url() method
+            return str(value.url())
+        
+        # For objects with a __str__ method that contains the URL
+        try:
+            url_str = str(value)
+            # Extract URL from string like "Url('https://example.com')"
+            if url_str.startswith("Url('") and url_str.endswith("')"):
+                return url_str[5:-2]  # Remove Url(' and ')
+            return url_str
+        except Exception:
+            return None
+    
+    def get_metrics(self) -> dict:
+        """Get conversion metrics."""
+        return {
+            'total_converted': len(self.db_events) if hasattr(self, 'db_events') else 0
+        }

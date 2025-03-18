@@ -1,6 +1,6 @@
 """AERC Calendar Scraper package."""
 
-from .scraper import AERCScraper, run_aerc_scraper
+from .parser_v2.main_v2 import AERCScraperV2 as AERCScraper
 from .config import ScraperSettings, get_settings
 from .metrics import ScraperMetrics
 from .exceptions import (
@@ -14,8 +14,7 @@ from .exceptions import (
 )
 
 __all__ = [
-    'AERCScraper',
-    'run_aerc_scraper',
+    'AERCScraper',  # Expose V2 as the default scraper
     'ScraperSettings',
     'get_settings',
     'ScraperMetrics',

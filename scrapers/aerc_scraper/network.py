@@ -8,6 +8,7 @@ from typing import Dict, Optional, Any
 import aiohttp
 from ..config import ScraperBaseSettings
 from ..exceptions import NetworkError
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,10 @@ class NetworkHandler:
             'total_bytes': 0,
             'total_time': 0
         }
+        
+        # Set default values for required properties if not in settings
+        self.request_timeout = getattr(settings, 'request_timeout', 30)
+        self.retry_delay = getattr(settings, 'retry_delay', 2)
     
     async def make_request(
         self, 
@@ -48,14 +53,14 @@ class NetworkHandler:
             raise NetworkError(error_msg)
             
         try:
-            timeout = aiohttp.ClientTimeout(total=self.settings.request_timeout)
+            timeout = aiohttp.ClientTimeout(total=self.request_timeout)
             request_headers = {**self.settings.default_headers, **(headers or {})}
             
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 request_func = session.post if method == "POST" else session.get
                 async with request_func(url, data=data, headers=request_headers) as response:
                     if response.status == 429:  # Too Many Requests
-                        retry_after = int(response.headers.get('Retry-After', self.settings.retry_delay))
+                        retry_after = int(response.headers.get('Retry-After', self.retry_delay))
                         logger.warning(
                             f"Rate limited by {url}. Waiting {retry_after} seconds before retry. "
                             f"Attempt {retry_count + 1}/{self.settings.max_retries}"
@@ -67,10 +72,10 @@ class NetworkHandler:
                     elif response.status >= 500:  # Server errors
                         logger.warning(
                             f"Server error {response.status} from {url}. "
-                            f"Retrying in {self.settings.retry_delay} seconds. "
+                            f"Retrying in {self.retry_delay} seconds. "
                             f"Attempt {retry_count + 1}/{self.settings.max_retries}"
                         )
-                        await asyncio.sleep(self.settings.retry_delay)
+                        await asyncio.sleep(self.retry_delay)
                         self.metrics['retries'] += 1
                         return await self.make_request(url, method, data, headers, retry_count + 1)
                         
@@ -101,10 +106,10 @@ class NetworkHandler:
         except asyncio.TimeoutError:
             logger.warning(
                 f"Request timeout to {url}. "
-                f"Retrying in {self.settings.retry_delay} seconds. "
+                f"Retrying in {self.retry_delay} seconds. "
                 f"Attempt {retry_count + 1}/{self.settings.max_retries}"
             )
-            await asyncio.sleep(self.settings.retry_delay)
+            await asyncio.sleep(self.retry_delay)
             self.metrics['retries'] += 1
             return await self.make_request(url, method, data, headers, retry_count + 1)
             
@@ -113,7 +118,7 @@ class NetworkHandler:
             self.metrics['errors'] += 1
             if retry_count < self.settings.max_retries:
                 self.metrics['retries'] += 1
-                await asyncio.sleep(self.settings.retry_delay)
+                await asyncio.sleep(self.retry_delay)
                 return await self.make_request(url, method, data, headers, retry_count + 1)
             raise NetworkError(f"Network request failed: {str(e)}")
             
@@ -122,7 +127,7 @@ class NetworkHandler:
             self.metrics['errors'] += 1
             if retry_count < self.settings.max_retries:
                 self.metrics['retries'] += 1
-                await asyncio.sleep(self.settings.retry_delay)
+                await asyncio.sleep(self.retry_delay)
                 return await self.make_request(url, method, data, headers, retry_count + 1)
             raise NetworkError(f"Request failed: {str(e)}")
     
@@ -133,3 +138,80 @@ class NetworkHandler:
             self.metrics['avg_request_time'] = self.metrics['total_time'] / self.metrics['success']
         
         return self.metrics.copy()
+        
+    async def fetch_calendar(self) -> str:
+        """Fetch the AERC calendar HTML."""
+        logger.info("Fetching AERC calendar HTML")
+        
+        # First, get the calendar page to extract season IDs
+        try:
+            # Get the main calendar page
+            calendar_html = await self.make_request(
+                url=self.settings.calendar_url,
+                method="GET"
+            )
+            
+            if not calendar_html:
+                raise NetworkError("Empty HTML content received from AERC calendar page")
+            
+            # Parse HTML to extract season IDs
+            soup = BeautifulSoup(calendar_html, 'lxml')
+            
+            # Extract season IDs
+            season_inputs = soup.select('input[name="season[]"]')
+            season_ids = []
+            
+            for input_tag in season_inputs:
+                season_id = input_tag.get('value')
+                if season_id:
+                    season_ids.append(season_id)
+            
+            if not season_ids:
+                raise NetworkError("Failed to extract season IDs from calendar page")
+                
+            # Use only current and next year IDs
+            season_ids = season_ids[:2]
+            logger.info(f"Extracted season IDs: {season_ids}")
+            
+            # Prepare data for the POST request
+            data = {
+                'action': 'aerc_calendar_form',
+                'calendar': 'calendar',
+                'country[]': ['United States', 'Canada'],
+                'within': '',
+                'zip': '',
+                'span[]': '#cal-span-season',
+                'season[]': season_ids,
+                'daterangefrom': '',
+                'daterangeto': '',
+                'distance[]': 'any',
+            }
+            
+            # Make POST request to get calendar HTML
+            response_text = await self.make_request(
+                url=self.settings.base_url, 
+                method="POST",
+                data=data
+            )
+            
+            if not response_text:
+                raise NetworkError("Empty response received from calendar API")
+            
+            # Parse JSON response
+            import json
+            try:
+                json_data = json.loads(response_text)
+                if 'html' in json_data:
+                    html_content = json_data['html']
+                    logger.info(f"Successfully fetched AERC calendar HTML ({len(html_content)} bytes)")
+                    return html_content
+                else:
+                    raise NetworkError("JSON response missing 'html' field")
+            except json.JSONDecodeError:
+                # If not JSON, might be direct HTML
+                logger.info(f"Response is not JSON, assuming direct HTML ({len(response_text)} bytes)")
+                return response_text
+                
+        except Exception as e:
+            logger.error(f"Failed to fetch AERC calendar: {str(e)}")
+            raise NetworkError(f"Failed to fetch AERC calendar: {str(e)}")

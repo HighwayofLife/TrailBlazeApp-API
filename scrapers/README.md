@@ -4,7 +4,7 @@ This directory contains the data scrapers used to collect event information from
 
 ## Available Scrapers
 
-- **AERC Calendar Scraper**: Enhanced scraper using Gemini AI to extract detailed event information
+- **AERC Calendar Scraper**: Scraper using direct HTML parsing to extract event information.
 
 ## Running Scrapers
 
@@ -15,30 +15,30 @@ Scrapers can be run individually or all at once using the `run_scrapers.py` scri
 python -m scrapers.run_scrapers
 
 # Run a specific scraper
-python -m scrapers.run_scrapers aerc_calendar
+python -m scrapers.run_scrapers aerc
+```
+
+For the improved AERC scraper (v2) specifically:
+
+```bash
+# Using the dedicated runner
+python -m scrapers.run_aerc_v2
+
+# Using Make
+make scraper-aerc-v2
 ```
 
 ## AERC Calendar Scraper
 
-The AERC Calendar Scraper is an enhanced scraper that uses the Google Gemini API to extract structured data from the AERC calendar website. It follows these steps:
+The AERC Calendar Scraper extracts data directly from the AERC calendar website's HTML.
 
-1. Extracts season IDs from the AERC calendar page
-2. Fetches calendar HTML using these season IDs
-3. Cleans the HTML to prepare for processing
-4. Uses Gemini API to extract structured data from the HTML
-5. Converts the structured data to the database schema
-6. Stores the events in the database
+### Current Implementation
 
-### Requirements
+The current implementation uses direct HTML parsing via the `parser_v2` module and can be found in `scrapers/aerc_scraper/parser_v2/`. This implementation is more reliable, maintainable, and efficient than the previous version.
 
-- Google Gemini API key (set in `.env` file as `GEMINI_API_KEY`)
-- Python packages: `google-generativeai`, `aiohttp`, `beautifulsoup4`
+### Deprecated Scraper
 
-### Fallback Mechanism
-
-If the Gemini API extraction fails, the scraper will:
-1. Retry with the more powerful `gemini-2.0-flash` model
-2. If that also fails, use a regex-based fallback extraction method
+The previous version of the AERC scraper, which relied heavily on the Gemini AI, has been deprecated and moved to the `scrapers/aerc_scraper/legacy` directory.
 
 ## Adding New Scrapers
 

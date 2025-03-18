@@ -1,6 +1,9 @@
 # AERC Calendar Scraper
 
-A modular scraper for extracting endurance ride events from the AERC calendar.
+A modular scraper for extracting endurance ride events from the AERC calendar. This scraper uses direct HTML parsing for data extraction.
+
+> [!NOTE]
+> The original implementation has been deprecated and moved to the `legacy` folder. The current active implementation uses the HTML parser in the `parser_v2` directory.
 
 ## Architecture
 
@@ -9,24 +12,34 @@ The scraper follows a modular architecture with clear separation of concerns:
 ```
 aerc_scraper/
 ├── __init__.py          # Package exports
-├── scraper.py           # Main scraper class
+├── parser_v2/           # Active HTML Parser implementation
+│   ├── __init__.py
+│   ├── html_parser.py   # HTML parsing logic
+│   └── main_v2.py       # Main implementation (AERCScraperV2)
+├── legacy/              # Deprecated implementation
+│   ├── scraper.py
+│   ├── gemini_client.py
+│   ├── converter.py
+│   ├── validator.py
+│   └── main.py
 ├── network.py           # Network request handling
 ├── html_cleaner.py      # HTML cleaning and preprocessing
-├── gemini_client.py     # Gemini API integration
-├── validator.py         # Data validation
-├── converter.py         # Data conversion to DB schema
 ├── database.py          # Database operations
-├── cache.py            # Caching with TTL support
-├── metrics.py          # Metrics collection
-├── config.py           # Configuration settings
-└── exceptions.py       # Custom exceptions
+├── cache.py             # Caching with TTL support
+├── metrics.py           # Metrics collection
+├── config.py            # Configuration settings
+└── exceptions.py        # Custom exceptions
 
 tests/
 └── scrapers/
     └── aerc_scraper/
         ├── conftest.py          # Test configuration
-        ├── test_*.py           # Test modules
-        └── fixtures/           # Test fixtures
+        ├── test_*.py            # Test modules
+        ├── legacy/              # Tests for legacy implementation
+        │   ├── test_gemini_client.py
+        │   ├── test_converter.py
+        │   └── ...
+        └── fixtures/            # Test fixtures
 ```
 
 ## Features
@@ -35,7 +48,6 @@ tests/
 - Robust error handling and recovery
 - Caching with TTL support
 - Comprehensive metrics collection
-- AI-powered data extraction using Google's Gemini
 - Efficient HTML processing with lxml
 - Validation using Pydantic models
 - Comprehensive test coverage
@@ -43,14 +55,11 @@ tests/
 ## Usage
 
 ```python
-from scrapers.aerc_scraper import AERCScraper, run_aerc_scraper
+from scrapers.aerc_scraper import AERCScraperV2
 
-# Using the async function
-result = await run_aerc_scraper(db_session)
-
-# Or using the class directly
-scraper = AERCScraper()
-result = await scraper.run(db_session)
+# Using the class directly
+scraper = AERCScraperV2(settings, db_session)
+result = await scraper.scrape()
 ```
 
 ## Configuration
@@ -58,10 +67,8 @@ result = await scraper.run(db_session)
 Configure the scraper using environment variables:
 
 ```env
-AERC_GEMINI_API_KEY=your_api_key
-AERC_DEBUG_MODE=true
-AERC_REFRESH_CACHE=false
-AERC_CACHE_TTL=3600
+SCRAPER_DEBUG=true
+SCRAPER_REFRESH=false
 ```
 
 Or using the settings class:
@@ -70,25 +77,23 @@ Or using the settings class:
 from scrapers.aerc_scraper import ScraperSettings
 
 settings = ScraperSettings(
-    gemini_api_key="your_api_key",
     debug_mode=True,
     refresh_cache=False,
     cache_ttl=3600
 )
-scraper = AERCScraper(settings=settings)
+scraper = AERCScraperV2(settings, db_session)
 ```
 
-## Testing
+## Running the Scraper
 
-Run the test suite:
+Use the dedicated runner script:
 
 ```bash
-# Run all tests with coverage
-./tests/run_scraper_tests.sh
+# Using Make
+make scraper-aerc-v2
 
-# Run specific test categories
-./tests/run_scraper_tests.sh -m unit
-./tests/run_scraper_tests.sh -m integration
+# Or directly
+python -m scrapers.run_aerc_v2
 ```
 
 ## Metrics
@@ -110,7 +115,7 @@ network_metrics = scraper.network.get_metrics()
 cache_metrics = scraper.cache.get_metrics()
 
 # Or get combined metrics from the run result
-result = await scraper.run(db_session)
+result = await scraper.scrape()
 print(result['success_rate'])
 ```
 
