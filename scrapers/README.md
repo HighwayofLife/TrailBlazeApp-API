@@ -36,10 +36,6 @@ The AERC Calendar Scraper extracts data directly from the AERC calendar website'
 
 The current implementation uses direct HTML parsing via the `parser_v2` module and can be found in `scrapers/aerc_scraper/parser_v2/`. This implementation is more reliable, maintainable, and efficient than the previous version.
 
-### Deprecated Scraper
-
-The previous version of the AERC scraper, which relied heavily on the Gemini AI, has been deprecated and moved to the `scrapers/aerc_scraper/legacy` directory.
-
 ## Adding New Scrapers
 
 To add a new scraper:

@@ -2,9 +2,6 @@
 
 A modular scraper for extracting endurance ride events from the AERC calendar. This scraper uses direct HTML parsing for data extraction.
 
-> [!NOTE]
-> The original implementation has been deprecated and moved to the `legacy` folder. The current active implementation uses the HTML parser in the `parser_v2` directory.
-
 ## Architecture
 
 The scraper follows a modular architecture with clear separation of concerns:
@@ -16,12 +13,6 @@ aerc_scraper/
 │   ├── __init__.py
 │   ├── html_parser.py   # HTML parsing logic
 │   └── main_v2.py       # Main implementation (AERCScraperV2)
-├── legacy/              # Deprecated implementation
-│   ├── scraper.py
-│   ├── gemini_client.py
-│   ├── converter.py
-│   ├── validator.py
-│   └── main.py
 ├── network.py           # Network request handling
 ├── html_cleaner.py      # HTML cleaning and preprocessing
 ├── database.py          # Database operations
@@ -35,10 +26,6 @@ tests/
     └── aerc_scraper/
         ├── conftest.py          # Test configuration
         ├── test_*.py            # Test modules
-        ├── legacy/              # Tests for legacy implementation
-        │   ├── test_gemini_client.py
-        │   ├── test_converter.py
-        │   └── ...
         └── fixtures/            # Test fixtures
 ```
 
