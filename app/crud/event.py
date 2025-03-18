@@ -109,13 +109,14 @@ async def get_events(
     return result.scalars().all()
 
 
-async def create_event(db: AsyncSession, event: EventCreate) -> Event:
+async def create_event(db: AsyncSession, event: EventCreate, perform_geocoding: bool = False) -> Event:
     """
     Create a new event.
     
     Args:
         db: Database session
         event: Event data
+        perform_geocoding: Whether to automatically geocode the event (default: False)
         
     Returns:
         Created event
@@ -141,6 +142,12 @@ async def create_event(db: AsyncSession, event: EventCreate) -> Event:
         notes=event.notes,
         external_id=event.external_id,
         source=getattr(event, 'source', None),
+        map_link=event.map_link,
+        manager_email=event.manager_email,
+        manager_phone=event.manager_phone,
+        judges=event.judges,
+        directions=event.directions,
+        is_canceled=event.is_canceled,
     )
     
     # Add to session
@@ -148,8 +155,8 @@ async def create_event(db: AsyncSession, event: EventCreate) -> Event:
     await db.commit()
     await db.refresh(db_event)
     
-    # Geocode the event if coordinates are not provided
-    if db_event.latitude is None or db_event.longitude is None:
+    # Geocode the event if coordinates are not provided and geocoding is enabled
+    if perform_geocoding and (db_event.latitude is None or db_event.longitude is None):
         geocoding_service = GeocodingService()
         success = await geocoding_service.geocode_event(db_event)
         
@@ -164,7 +171,7 @@ async def create_event(db: AsyncSession, event: EventCreate) -> Event:
     return db_event
 
 
-async def update_event(db: AsyncSession, event_id: int, event: EventUpdate) -> Optional[Event]:
+async def update_event(db: AsyncSession, event_id: int, event: EventUpdate, perform_geocoding: bool = False) -> Optional[Event]:
     """
     Update an existing event.
     
@@ -172,6 +179,7 @@ async def update_event(db: AsyncSession, event_id: int, event: EventUpdate) -> O
         db: Database session
         event_id: ID of the event to update
         event: Updated event data
+        perform_geocoding: Whether to automatically geocode the event if location changed (default: False)
         
     Returns:
         Updated event or None if not found
@@ -188,7 +196,7 @@ async def update_event(db: AsyncSession, event_id: int, event: EventUpdate) -> O
     need_geocoding = False
     
     # If the location is being updated and coordinates are not provided, we'll need to geocode
-    if 'location' in update_data and ('latitude' not in update_data or 'longitude' not in update_data):
+    if perform_geocoding and 'location' in update_data and ('latitude' not in update_data or 'longitude' not in update_data):
         need_geocoding = True
     
     if update_data:
@@ -208,7 +216,7 @@ async def update_event(db: AsyncSession, event_id: int, event: EventUpdate) -> O
     db_event = await get_event(db, event_id)
     
     # Geocode if needed
-    if need_geocoding or (db_event.latitude is None or db_event.longitude is None):
+    if perform_geocoding and (need_geocoding or (db_event.latitude is None or db_event.longitude is None)):
         geocoding_service = GeocodingService()
         success = await geocoding_service.geocode_event(db_event)
         

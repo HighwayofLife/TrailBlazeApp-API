@@ -4,14 +4,14 @@ from typing import Dict, List, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.logging_config import get_logger
 from scrapers.scraper_manager import ScraperManager
-from scrapers.aerc_scraper import AERCScraper
+from scrapers.aerc_scraper.parser_v2.main_v2 import AERCScraperV2
 from scrapers.exceptions import ScraperError
 
 logger = get_logger("services.scraper")
 
 # Initialize and configure scraper manager
 _scraper_manager = ScraperManager()
-_scraper_manager.register_scraper("aerc_calendar", AERCScraper)
+_scraper_manager.register_scraper("aerc_calendar", AERCScraperV2)
 
 async def run_scraper(scraper_id: str, db: AsyncSession) -> Dict[str, Any]:
     """Run a specific scraper."""

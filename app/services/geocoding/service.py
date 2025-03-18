@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict, Optional, Tuple, List, Any, Union
 from functools import lru_cache
+import re
 
 from geopy.geocoders import Nominatim, GoogleV3
 from geopy.adapters import AioHTTPAdapter
@@ -44,6 +45,47 @@ class GeocodingService:
         
         # Cache for geocoding results
         self._cache = {}
+    
+    def _clean_address(self, address: str) -> str:
+        """
+        Clean and format an address to improve geocoding success.
+        
+        Args:
+            address: The raw address string
+            
+        Returns:
+            Cleaned address string
+        """
+        if not address:
+            return ""
+            
+        # Remove any text after a semicolon (often contains non-address info)
+        if ";" in address:
+            address = address.split(";")[0].strip()
+            
+        # Remove any instructions in parentheses
+        address = re.sub(r'\([^)]*\)', '', address)
+        
+        # Remove "intro ride each day" and similar phrases
+        address = re.sub(r'intro ride.*', '', address, flags=re.IGNORECASE)
+        address = re.sub(r'limited entries.*', '', address, flags=re.IGNORECASE)
+        
+        # If the address contains a dash, try the part after the dash as it might contain the location
+        if " - " in address:
+            parts = address.split(" - ", 1)
+            # If the second part looks like an address (contains numbers, street names, etc.)
+            if re.search(r'\d+|\brd\b|\bst\b|\bave\b|\bhwy\b|\broute\b|\bcounty\b|\bpark\b', parts[1], re.IGNORECASE):
+                address = parts[1].strip()
+        
+        # Clean up extra whitespace
+        address = re.sub(r'\s+', ' ', address).strip()
+        
+        # Add "USA" if it's likely a US address without country specification
+        us_state_pattern = r'(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)'
+        if re.search(f"{us_state_pattern}\\b", address) and "USA" not in address and "US" not in address:
+            address += ", USA"
+            
+        return address
         
     @retry(
         stop=stop_after_attempt(3),
@@ -64,30 +106,48 @@ class GeocodingService:
             logger.warning("Empty address provided for geocoding")
             return None
         
+        # Clean and format the address
+        cleaned_address = self._clean_address(address)
+        if not cleaned_address:
+            logger.warning(f"Address cleaning resulted in empty string: {address}")
+            return None
+            
+        logger.debug(f"Cleaned address: '{address}' -> '{cleaned_address}'")
+        
         # Check cache first
-        if address in self._cache:
-            logger.debug(f"Returning cached coordinates for address: {address}")
-            return self._cache[address]
+        if cleaned_address in self._cache:
+            logger.debug(f"Returning cached coordinates for address: {cleaned_address}")
+            return self._cache[cleaned_address]
         
         try:
-            logger.info(f"Geocoding address: {address}")
-            location = await self.geocoder.geocode(address)
+            logger.info(f"Geocoding address: {cleaned_address}")
+            location = await self.geocoder.geocode(cleaned_address)
             
             if location:
                 # Cache the result
                 coordinates = (location.latitude, location.longitude)
-                self._cache[address] = coordinates
-                logger.info(f"Geocoded {address} to {coordinates}")
+                self._cache[cleaned_address] = coordinates
+                logger.info(f"Geocoded '{cleaned_address}' to {coordinates}")
                 return coordinates
             else:
-                logger.warning(f"No location found for address: {address}")
+                # If the cleaned address failed, try with the original address
+                if cleaned_address != address:
+                    logger.info(f"Trying original address: {address}")
+                    location = await self.geocoder.geocode(address)
+                    if location:
+                        coordinates = (location.latitude, location.longitude)
+                        self._cache[cleaned_address] = coordinates
+                        logger.info(f"Geocoded original address '{address}' to {coordinates}")
+                        return coordinates
+                
+                logger.warning(f"No location found for address: {cleaned_address}")
                 return None
         except (GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable) as e:
-            logger.error(f"Geocoding error for address {address}: {str(e)}")
+            logger.error(f"Geocoding error for address {cleaned_address}: {str(e)}")
             # Let tenacity retry handle these exceptions
             raise
         except Exception as e:
-            logger.exception(f"Unexpected error geocoding address {address}: {str(e)}")
+            logger.exception(f"Unexpected error geocoding address {cleaned_address}: {str(e)}")
             return None
         
     async def geocode_event(self, event: Event) -> bool:
