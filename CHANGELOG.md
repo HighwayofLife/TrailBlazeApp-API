@@ -48,6 +48,12 @@
 - **Fixed Linter Errors**: Corrected linter errors in `app/schemas/event.py` by adding `self` to validator methods.
 - **Fixed Test Assertions**: Updated test assertions to safely handle different types of event_details objects.
 
+### HTML Parser Improvements
+
+- **Enhanced Canadian Location Detection**: Updated the `_parse_location` method in the HTML parser to accurately identify Canadian provinces and set the country to 'Canada' when applicable.
+- **Improved Event Data Extraction**: Refined the extraction logic to handle various location formats and ensure accurate parsing of event details.
+- **Consolidated Event Merging Logic**: Improved the `_combine_events_with_same_ride_id` method to handle multi-day events more effectively, ensuring all relevant data is preserved.
+
 ### Testing
 
 - **Verified Imports**: Confirmed that all schema imports work as expected by running tests.

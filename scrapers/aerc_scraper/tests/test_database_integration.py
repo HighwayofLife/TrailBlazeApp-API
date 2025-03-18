@@ -12,71 +12,14 @@ project_root = str(Path(__file__).parents[3])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Import centralized test data
+from scrapers.aerc_scraper.tests.expected_test_data import EXPECTED_DATA, EVENT_SAMPLES, get_expected_data
+
 # Mock key dependencies
 AsyncSession = MagicMock(name="AsyncSession")
 HTMLParser = MagicMock(name="HTMLParser")
 DataHandler = MagicMock(name="DataHandler")
 DatabaseHandler = MagicMock(name="DatabaseHandler")
-
-# Define a minimal test data set inline to avoid external dependencies
-EXPECTED_DATA = {
-    "old_pueblo_event.html": {
-        "name": "Original Old Pueblo",
-        "source": "AERC",
-        "event_type": "endurance",
-        "date_start": "2025-03-28",
-        "location": "Empire Ranch, Empire Ranch Rd, Sonoita, AZ",
-        "region": "SW",
-        "is_canceled": False,
-        "ride_id": "14526",
-        "has_intro_ride": True,
-        "location_details": {
-            "city": "Sonoita",
-            "state": "AZ",
-            "country": "USA"
-        }
-    },
-    "biltmore_cancelled_event.html": {
-        "name": "Biltmore Open Challenge I",
-        "source": "AERC",
-        "event_type": "endurance",
-        "date_start": "2025-05-02",
-        "location": "Biltmore Equestrian Center, 1 Biltmore Estate Dr., NC",
-        "region": "SE",
-        "is_canceled": True,
-        "ride_id": "14546",
-        "has_intro_ride": False,
-        "location_details": {
-            "city": "Asheville", 
-            "state": "NC",
-            "country": "USA"
-        }
-    },
-    "tevis_cup_event.html": {
-        "name": "Western States Trail Ride (The Tevis Cup)",
-        "source": "AERC",
-        "event_type": "endurance",
-        "date_start": "2025-07-12",
-        "location": "Robie Park, CA",
-        "region": "W",
-        "is_canceled": False,
-        "ride_id": "14492",
-        "has_intro_ride": False,
-        "location_details": {
-            "city": "Truckee",
-            "state": "CA",
-            "country": "USA"
-        }
-    }
-}
-
-EVENT_SAMPLES = list(EXPECTED_DATA.keys())
-
-def get_expected_data(filename):
-    """Get expected data for a sample file."""
-    if filename not in EXPECTED_DATA:
-        raise KeyError(f"No expected data for {filename}")
-    return EXPECTED_DATA[filename]
 
 class TestDatabaseIntegration(unittest.TestCase):
     """Test full integration from HTML parsing to database."""
@@ -109,8 +52,7 @@ class TestDatabaseIntegration(unittest.TestCase):
         self.assertGreater(len(EXPECTED_DATA), 0, "EXPECTED_DATA should contain test data")
         
         # Check that expected_test_data has all required test files
-        required_samples = ["old_pueblo_event.html", "biltmore_cancelled_event.html", "tevis_cup_event.html"]
-        for sample in required_samples:
+        for sample in EVENT_SAMPLES:
             self.assertIn(sample, EXPECTED_DATA, f"Missing expected test data for {sample}")
         
         print("✅ Test structure validation passed!")
@@ -123,7 +65,8 @@ class TestDatabaseIntegration(unittest.TestCase):
         required fields for database storage.
         """
         # For each expected sample, verify the structure of the data
-        for sample_name, expected in EXPECTED_DATA.items():
+        for sample_name in EVENT_SAMPLES:
+            expected = get_expected_data(sample_name)
             with self.subTest(f"Testing expected data for {sample_name}"):
                 # Check essential fields exist in the expected data
                 required_fields = ["name", "source", "date_start", "location", "is_canceled"]
@@ -151,7 +94,7 @@ class TestDatabaseIntegration(unittest.TestCase):
         """
         # Create mock event data using the expected data source
         mock_event = MagicMock()
-        for field, value in EXPECTED_DATA["old_pueblo_event.html"].items():
+        for field, value in get_expected_data("old_pueblo_event.html").items():
             setattr(mock_event, field, value)
         
         # Setup return values for mocks
@@ -184,7 +127,8 @@ class TestDatabaseIntegration(unittest.TestCase):
         for all sample files.
         """
         # For each expected sample, create mock objects that would be created in the real flow
-        for sample_name, expected in EXPECTED_DATA.items():
+        for sample_name in EVENT_SAMPLES:
+            expected = get_expected_data(sample_name)
             with self.subTest(f"Testing integration flow for {sample_name}"):
                 # Mock the HTML parser output
                 raw_event = dict(expected)

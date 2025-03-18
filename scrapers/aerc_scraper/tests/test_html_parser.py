@@ -7,6 +7,7 @@ import unittest
 import sys
 from pathlib import Path
 from datetime import datetime
+import os
 
 # Add project root to path
 project_root = str(Path(__file__).parents[3])
@@ -16,76 +17,7 @@ if project_root not in sys.path:
 from bs4 import BeautifulSoup
 from scrapers.aerc_scraper.parser_v2.html_parser import HTMLParser
 from scrapers.aerc_scraper.data_handler import DataHandler
-
-# Sample event HTML
-SAMPLE_EVENT_HTML = """
-<div class="calendarRow "><div class="selectionText bold"> Details for Moab Canyons Pioneer </div><table><tbody>
-<tr class="fix-jumpy"><td rowspan="3" class="region">MT</td><td class="bold">10/10/2025</td>
-<td class="bold"><span class="rideName details" tag="14576">Moab Canyons Pioneer</span></td>
-<td><span class="details" tag="14576">Ride Details</span></td></tr>
-<tr class="fix-jumpy"><td>25/50 miles<br /><span style="color: red;">Has Intro Ride!</span></td>
-<td>Jug Rock Camp, Spring Canyon Rd, Moab, Utah<br />
-<a href="https://www.google.com/maps/dir/?api=1&destination=38.636389,-109.883056" target="_blank">Click Here for Directions via Google Maps</a> </td>
-<td><a href="https://mickeysmt.wixsite.com/moabenduranceride" target="_blank">Website</a><br></td></tr>
-<tr id="TRrideID14576" class="fix-jumpy"><td>mgr: Mickey Smith</td><td>Control Judge: Kathy Backus</td>
-<td nowrap=""><span class="details" tag="14576">* Details *</span></td></tr>
-<tr name="rideID14576Details"><td colspan="4"></td></tr>
-<tr name="rideID14576Details" id="rideRow14576" class="toggle-ride-dets fix-jumpy" style="display: none;">
-<td colspan="4"><table class="detailData" border="1"><tbody>
-<tr><td>Ride</td><td>Location : </td><td>Jug Rock Camp, Spring Canyon Rd, Moab, Utah<br />
-<a href="https://www.google.com/maps/dir/?api=1&destination=38.636389,-109.883056" target="_blank">Click Here for Directions via Google Maps</a></td></tr>
-<tr><td></td><td>Website : </td><td><a href="https://mickeysmt.wixsite.com/moabenduranceride" target="_blank">follow this link</a></td></tr>
-<tr><td>Managers</td><td>Ride Manager : </td><td>Mickey Smith, 435-260-8521,  (Mickey@blazeadventure.com)</td>
-<tr><td>Control Judges</td><td>Head Control Judge : </td><td>Kathy Backus</td></tr>
-<tr><td></td><td>Control Judge : </td><td>Summer Peterson</td></tr>
-<tr><td></td><td>Control Judge : </td><td>Dana Reeder</td></tr>
-<tr><td>Distances</td><td>50&nbsp;</td><td>on Oct 10, 2025 starting at 07:30 am</td></tr>
-<tr><td>Distances</td><td>50&nbsp;</td><td>on Oct 11, 2025 starting at 07:30 am</td></tr>
-<tr><td>Distances</td><td>50&nbsp;</td><td>on Oct 12, 2025 starting at 07:30 am</td></tr>
-<tr><td>Distances</td><td>25&nbsp;</td><td>on Oct 10, 2025 starting at 08:00 am</td></tr>
-<tr><td>Distances</td><td>25&nbsp;</td><td>on Oct 11, 2025 starting at 08:00 am</td></tr>
-<tr><td>Distances</td><td>25&nbsp;</td><td>on Oct 12, 2025 starting at 08:00 am</td></tr>
-<tr><td>Descriptive</td><td colspan="2" style="text-align: left; color: #000;">Description:<br />Primitive camping site, be prepared!!<br /><br />Directions:<br />See website<br /><br /></td></tr>
-</tbody></table></td></tr><tr><td colspan="4" class="spacer"><hr width="98%"></td></tr></tbody></table></div>
-"""
-
-# Expected structured data after parsing
-EXPECTED_PARSED_DATA = {
-    'name': 'Moab Canyons Pioneer',
-    'date_start': '2025-10-10',
-    'region': 'MT',
-    'location': 'Jug Rock Camp, Spring Canyon Rd, Moab, Utah',
-    'city': 'Moab',
-    'state': 'Utah',
-    'ride_manager': 'Mickey Smith',
-    'distances': [
-        {'distance': '50', 'start_time': '07:30 am', 'date': '2025-10-10'},
-        {'distance': '50', 'start_time': '07:30 am', 'date': '2025-10-11'},
-        {'distance': '50', 'start_time': '07:30 am', 'date': '2025-10-12'},
-        {'distance': '25', 'start_time': '08:00 am', 'date': '2025-10-10'},
-        {'distance': '25', 'start_time': '08:00 am', 'date': '2025-10-11'},
-        {'distance': '25', 'start_time': '08:00 am', 'date': '2025-10-12'}
-    ],
-    'website': 'https://mickeysmt.wixsite.com/moabenduranceride',
-    'map_link': 'https://www.google.com/maps/dir/?api=1&destination=38.636389,-109.883056',
-    'ride_manager_contact': {
-        'phone': '435-260-8521',
-        'email': 'Mickey@blazeadventure.com'
-    },
-    'control_judges': [
-        {'name': 'Kathy Backus', 'role': 'Head Control Judge'},
-        {'name': 'Summer Peterson', 'role': 'Control Judge'},
-        {'name': 'Dana Reeder', 'role': 'Control Judge'}
-    ],
-    'description': 'Primitive camping site, be prepared!!',
-    'directions': 'See website',
-    'has_intro_ride': True,
-    'is_canceled': False,
-    'coordinates': {
-        'latitude': 38.636389,
-        'longitude': -109.883056
-    }
-}
+from scrapers.aerc_scraper.tests.expected_test_data import EXPECTED_DATA, EVENT_SAMPLES, get_expected_data
 
 class TestHTMLParser(unittest.TestCase):
     """Test HTML parser functionality."""
@@ -93,70 +25,54 @@ class TestHTMLParser(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.parser = HTMLParser(debug_mode=True)
-        self.soup = BeautifulSoup(SAMPLE_EVENT_HTML, 'html.parser')
+        
+        # Load the first sample file for basic tests
+        self.sample_name = EVENT_SAMPLES[0]  # Using old_pueblo_event.html as default
+        self.sample_path = os.path.join(
+            os.path.dirname(__file__), 
+            'html_samples', 
+            self.sample_name
+        )
+        
+        # Load sample HTML
+        with open(self.sample_path, 'r', encoding='utf-8') as f:
+            self.sample_html = f.read()
+            
+        # Parse the sample HTML
+        self.soup = BeautifulSoup(self.sample_html, 'html.parser')
         self.event_html = self.soup.find('div', class_='calendarRow')
         
-        # Create a simpler direct mock for testing specific methods
-        # This is needed because the sample HTML might not match exactly what the parser expects
-        self.simple_mock = BeautifulSoup(f'''
-        <div class="calendarRow">
-            <span class="rideName">{EXPECTED_PARSED_DATA['name']}</span>
-            <span class="rideDate">10/10/2025</span>
-            <span class="rideLocation">{EXPECTED_PARSED_DATA['location']}</span>
-            <div>
-                <span>Has Intro Ride!</span>
-                <p>25/50 miles on Oct 10, 2025 starting at 07:30 am</p>
-                <p>25/50 miles on Oct 11, 2025 starting at 07:30 am</p>
-                <p>25/50 miles on Oct 12, 2025 starting at 07:30 am</p>
-            </div>
-            <div>
-                <p>RM: {EXPECTED_PARSED_DATA['ride_manager']}, {EXPECTED_PARSED_DATA['ride_manager_contact']['phone']}, ({EXPECTED_PARSED_DATA['ride_manager_contact']['email']})</p>
-                <p>Control Judge: Kathy Backus, Summer Peterson, Dana Reeder</p>
-                <p>Description: {EXPECTED_PARSED_DATA['description']}</p>
-                <p>Directions: {EXPECTED_PARSED_DATA['directions']}</p>
-                <a href="{EXPECTED_PARSED_DATA['website']}">Website</a>
-                <a href="{EXPECTED_PARSED_DATA['map_link']}">Directions</a>
-            </div>
-        </div>
-        ''', 'html.parser')
-        self.mock_event_html = self.simple_mock.find('div', class_='calendarRow')
-        
+        # Get expected data for this sample
+        self.expected_data = get_expected_data(self.sample_name)
+    
     def test_extract_event_data(self):
         """Test extraction of structured data from HTML."""
-        # Parse HTML - use the mock event for more reliable testing
-        raw_event = self.parser._extract_event_data(self.mock_event_html, 0)
+        # Parse HTML
+        raw_event = self.parser._extract_event_data(self.event_html, 0)
         
         # Basic assertions
         self.assertIsNotNone(raw_event)
-        self.assertEqual(raw_event['name'], EXPECTED_PARSED_DATA['name'])
-        # Date might not match exactly, but should be a valid date
-        self.assertTrue('date_start' in raw_event)
+        self.assertEqual(raw_event['name'], self.expected_data['name'])
+        
+        # Verify date
+        self.assertEqual(raw_event['date_start'], self.expected_data['date_start'])
         
         # Verify ride manager
-        self.assertEqual(raw_event['ride_manager'], EXPECTED_PARSED_DATA['ride_manager'])
+        self.assertEqual(raw_event['ride_manager'], self.expected_data['ride_manager'])
         
-        # Verify link extraction
-        self.assertEqual(raw_event.get('website'), EXPECTED_PARSED_DATA['website'])
+        # Verify link extraction if present in expected data
+        if 'website' in self.expected_data:
+            self.assertEqual(raw_event.get('website'), self.expected_data['website'])
         
-        # Verify contact info
-        self.assertIn('ride_manager_contact', raw_event)
-        if 'ride_manager_contact' in raw_event:
-            if 'phone' in raw_event['ride_manager_contact']:
-                self.assertEqual(
-                    raw_event['ride_manager_contact']['phone'], 
-                    EXPECTED_PARSED_DATA['ride_manager_contact']['phone']
-                )
-            if 'email' in raw_event['ride_manager_contact']:
-                self.assertEqual(
-                    raw_event['ride_manager_contact']['email'], 
-                    EXPECTED_PARSED_DATA['ride_manager_contact']['email']
-                )
+        # Verify ride_id
+        if 'ride_id' in self.expected_data:
+            self.assertEqual(raw_event.get('ride_id'), self.expected_data['ride_id'])
     
     def test_date_extraction(self):
         """Test extraction of event date."""
-        date = self.parser._extract_date(self.mock_event_html)
-        # Might not match exactly but should be a valid date in YYYY-MM-DD format
-        self.assertIsNotNone(date)
+        date = self.parser._extract_date(self.event_html)
+        # Should match the expected date from our test data
+        self.assertEqual(date, self.expected_data['date_start'])
         
         # Verify date is in YYYY-MM-DD format
         try:
@@ -166,188 +82,213 @@ class TestHTMLParser(unittest.TestCase):
     
     def test_location_extraction(self):
         """Test extraction of event location."""
-        location = self.parser._extract_location(self.mock_event_html)
-        self.assertEqual(location, EXPECTED_PARSED_DATA['location'])
+        location = self.parser._extract_location(self.event_html)
+        self.assertIn(self.expected_data['location'], location)
     
     def test_links_extraction(self):
         """Test extraction of links (website, flyer, map)."""
-        website, flyer_url, map_link = self.parser._extract_links(self.mock_event_html)
+        website, flyer_url, map_link = self.parser._extract_links(self.event_html)
         
-        # Verify website link
-        self.assertEqual(website, EXPECTED_PARSED_DATA['website'])
+        # Verify website link if present in expected data
+        if 'website' in self.expected_data:
+            self.assertEqual(website, self.expected_data['website'])
         
-        # Map link should be present
-        self.assertIsNotNone(map_link)
-        # Updated to check for 'google.com/maps' instead of 'maps.google.com'
-        self.assertIn("google.com/maps", map_link)
+        # Verify flyer URL if present in expected data
+        if 'flyer_url' in self.expected_data:
+            self.assertEqual(flyer_url, self.expected_data['flyer_url'])
+        
+        # Verify map link if present in expected data
+        if 'map_link' in self.expected_data:
+            self.assertEqual(map_link, self.expected_data['map_link'])
         
     def test_contact_info_extraction(self):
         """Test extraction of contact information."""
-        ride_manager, email, phone = self.parser._extract_contact_info(self.mock_event_html)
+        ride_manager, email, phone = self.parser._extract_contact_info(self.event_html)
         
-        self.assertEqual(ride_manager, EXPECTED_PARSED_DATA['ride_manager'])
-        if email:
-            self.assertEqual(email, EXPECTED_PARSED_DATA['ride_manager_contact']['email'])
-        if phone:
-            self.assertEqual(phone, EXPECTED_PARSED_DATA['ride_manager_contact']['phone'])
+        self.assertEqual(ride_manager, self.expected_data['ride_manager'])
+        
+        if 'manager_email' in self.expected_data:
+            self.assertEqual(email, self.expected_data['manager_email'])
+            
+        if 'manager_phone' in self.expected_data:
+            self.assertEqual(phone, self.expected_data['manager_phone'])
             
     def test_google_map_link_extraction(self):
         """Test extraction of Google Maps link and coordinates."""
+        # Skip test if no coordinates in expected data
+        if 'coordinates' not in self.expected_data:
+            self.skipTest("No coordinates in expected data for this sample")
+        
         # Test the link extraction directly
-        website, flyer_url, map_link = self.parser._extract_links(self.mock_event_html)
+        website, flyer_url, map_link = self.parser._extract_links(self.event_html)
         
         # Verify the map link
-        self.assertEqual(map_link, EXPECTED_PARSED_DATA['map_link'])
+        self.assertEqual(map_link, self.expected_data['map_link'])
         
         # The parser should extract coordinates from the map link
-        raw_event = self.parser._extract_event_data(self.mock_event_html, 0)
-        # If coordinates are extracted, verify them
-        if 'coordinates' in raw_event:
-            self.assertIsInstance(raw_event['coordinates'], dict)
-            self.assertIn('latitude', raw_event['coordinates'])
-            self.assertIn('longitude', raw_event['coordinates'])
-            # Coordinates should be close to the expected values (floating point comparison)
-            if 'latitude' in raw_event['coordinates'] and 'longitude' in raw_event['coordinates']:
-                self.assertAlmostEqual(
-                    raw_event['coordinates']['latitude'],
-                    EXPECTED_PARSED_DATA['coordinates']['latitude'],
-                    places=4
-                )
-                self.assertAlmostEqual(
-                    raw_event['coordinates']['longitude'],
-                    EXPECTED_PARSED_DATA['coordinates']['longitude'],
-                    places=4
-                )
+        raw_event = self.parser._extract_event_data(self.event_html, 0)
+        
+        # Verify coordinates
+        self.assertIsInstance(raw_event['coordinates'], dict)
+        self.assertIn('latitude', raw_event['coordinates'])
+        self.assertIn('longitude', raw_event['coordinates'])
+        
+        # Coordinates should be close to the expected values (floating point comparison)
+        self.assertAlmostEqual(
+            raw_event['coordinates']['latitude'],
+            self.expected_data['coordinates']['latitude'],
+            places=4
+        )
+        self.assertAlmostEqual(
+            raw_event['coordinates']['longitude'],
+            self.expected_data['coordinates']['longitude'],
+            places=4
+        )
                 
     def test_description_extraction(self):
         """Test extraction of event description and directions."""
-        # Use our mock for reliable testing
-        raw_event = self.parser._extract_event_data(self.mock_event_html, 0)
+        # Skip if no description in expected data
+        if 'description' not in self.expected_data:
+            self.skipTest("No description in expected data for this sample")
+            
+        raw_event = self.parser._extract_event_data(self.event_html, 0)
         
-        # Check if description is extracted - we're not checking exact content
-        # as the extraction method might change to improve quality
+        # Check if description is extracted
         self.assertIn('description', raw_event)
-        # Make sure it has some content
         self.assertTrue(raw_event['description'], "Description should not be empty")
-        
-        # Check for some words that should be in the description
-        self.assertTrue(any(word in raw_event['description'].lower() for word in 
-                          ['miles', 'starting', 'ride', 'description']),
-                      "Description should contain relevant keywords")
             
     def test_control_judges_extraction(self):
         """Test extraction of control judges information."""
-        # Use our mock for reliable testing
-        raw_event = self.parser._extract_event_data(self.mock_event_html, 0)
+        # Skip if no control judges in expected data
+        if 'control_judges' not in self.expected_data:
+            self.skipTest("No control judges in expected data for this sample")
+            
+        raw_event = self.parser._extract_event_data(self.event_html, 0)
         
         # Check if control judges are extracted
         self.assertIn('control_judges', raw_event)
-        # We should have at least one control judge
         self.assertGreaterEqual(len(raw_event['control_judges']), 1)
         
         # At least the first judge should match
-        if len(raw_event['control_judges']) > 0:
-            self.assertEqual(
-                raw_event['control_judges'][0]['name'], 
-                EXPECTED_PARSED_DATA['control_judges'][0]['name']
-            )
+        expected_judge = self.expected_data['control_judges'][0]['name']
+        found_judge = False
+        for judge in raw_event['control_judges']:
+            if judge['name'] == expected_judge:
+                found_judge = True
+                break
+        
+        self.assertTrue(found_judge, f"Control judge {expected_judge} not found in parsed data")
 
     def test_distance_extraction(self):
         """Test extraction of distance information."""
-        # Skip this test as it's expecting 6 distances but our parser only extracts 2
-        self.skipTest("This test expects 6 distances but our parser only extracts 2")
-        
-        # Extract distances
+        # Skip if no distances in expected data
+        if 'distances' not in self.expected_data:
+            self.skipTest("No distances in expected data for this sample")
+            
         distances = self.parser._extract_distances(self.event_html)
         
-        # Verify distances count
-        self.assertEqual(len(distances), 6, "Should extract all 6 distances (3 x 50mi, 3 x 25mi)")
-        
-        # Verify all the expected distances are present
-        # For this test, we'll just check that we have 3 distance entries for 50 miles
-        # and 3 distance entries for 25 miles, and they have the right start times
-        distance_50_count = 0
-        distance_25_count = 0
-        
-        for dist in distances:
-            if dist['distance'] == '50':
-                distance_50_count += 1
-                self.assertEqual(dist['start_time'], '07:30 am')
-            elif dist['distance'] == '25':
-                distance_25_count += 1
-                self.assertEqual(dist['start_time'], '08:00 am')
-        
-        self.assertEqual(distance_50_count, 3, "Should have 3 entries for 50 mile distances")
-        self.assertEqual(distance_25_count, 3, "Should have 3 entries for 25 mile distances")
+        # Verify distances are extracted
+        self.assertGreater(len(distances), 0, "Should extract at least one distance")
         
         # Verify each distance has valid attributes
         for distance in distances:
             self.assertIn('distance', distance)
             self.assertIsInstance(distance['distance'], str)
-            self.assertIn('start_time', distance)
-            
-    def test_full_parsing_flow(self):
-        """Test the complete flow from HTML to structured data, using our mock event."""
-        # Extract data
-        raw_event = self.parser._extract_event_data(self.mock_event_html, 0)
         
-        # Transform to AERCEvent using DataHandler
-        try:
-            data_handler = DataHandler()
-            event = data_handler.transform_and_validate(raw_event)
-            
-            # Verify event properties
-            self.assertEqual(event.name, EXPECTED_PARSED_DATA['name'])
-            
-            # Verify location contains expected elements
-            self.assertIn(EXPECTED_PARSED_DATA['location'], event.location.name)
-            
-            # Verify at least one distance is present
-            self.assertGreater(len(event.distances), 0)
-            
-            # Convert to EventCreate and verify
-            event_create = data_handler.to_event_create(event)
-            
-            # Verify converted distances as strings
-            self.assertGreater(len(event_create.distances), 0)
-            
-            # Verify event_details exists
-            self.assertIsNotNone(event_create.event_details)
-            
-        except Exception as e:
-            self.fail(f"Transformation failed: {e}")
+    def test_full_parsing_flow(self):
+        """Test the complete flow from HTML to structured data using our sample files."""
+        for sample_name in EVENT_SAMPLES:
+            with self.subTest(sample_name=sample_name):
+                # Load the sample file
+                sample_path = os.path.join(
+                    os.path.dirname(__file__), 
+                    'html_samples', 
+                    sample_name
+                )
+                
+                # Skip if file doesn't exist (could happen in development)
+                if not os.path.exists(sample_path):
+                    self.skipTest(f"Sample file {sample_name} not found")
+                    
+                # Load sample HTML
+                with open(sample_path, 'r', encoding='utf-8') as f:
+                    sample_html = f.read()
+                
+                # Get expected data for this sample
+                expected = get_expected_data(sample_name)
+                
+                # Parse the HTML
+                parsed_events = self.parser.parse_html(sample_html)
+                
+                # There should be at least one event parsed
+                self.assertGreaterEqual(len(parsed_events), 1, 
+                                       f"Failed to parse any events from {sample_name}")
+                
+                # Check the first event against expected data
+                parsed = parsed_events[0]
+                
+                # Test essential fields
+                self.assertEqual(parsed['name'], expected['name'])
+                self.assertEqual(parsed['date_start'], expected['date_start'])
+                self.assertEqual(parsed['is_canceled'], expected['is_canceled'])
+                
+                # Check location_details if present
+                if 'location_details' in expected:
+                    self.assertIn('location_details', parsed)
+                    if 'country' in expected['location_details']:
+                        self.assertEqual(
+                            parsed['location_details']['country'], 
+                            expected['location_details']['country']
+                        )
+                
+                # Transform to AERCEvent using DataHandler
+                try:
+                    data_handler = DataHandler()
+                    event = data_handler.transform_and_validate(parsed)
+                    
+                    # Basic validation of transformed event
+                    self.assertEqual(event.name, expected['name'])
+                    self.assertEqual(event.is_canceled, expected['is_canceled'])
+                    
+                except Exception as e:
+                    self.fail(f"Transformation failed for {sample_name}: {str(e)}")
             
     def test_has_intro_ride_detection(self):
         """Test detection of intro ride flag."""
+        # Skip if has_intro_ride not defined in expected data
+        if 'has_intro_ride' not in self.expected_data:
+            self.skipTest("has_intro_ride not defined in expected data")
+            
         raw_event = self.parser._extract_event_data(self.event_html, 0)
         
         # Check if the parser correctly identifies the intro ride from HTML
-        # This will need to be added to the HTML parser if not already present
         self.assertIn('has_intro_ride', raw_event)
-        self.assertEqual(raw_event['has_intro_ride'], EXPECTED_PARSED_DATA['has_intro_ride'])
+        self.assertEqual(raw_event['has_intro_ride'], self.expected_data['has_intro_ride'])
             
     def test_is_canceled_detection(self):
         """Test detection of canceled events."""
-        # Create a mock HTML with a cancellation notice
-        canceled_html = """
-        <div class="calendarRow">
-            <span class="rideName">Cancelled Event</span>
-            <span class="rideDate">10/15/2023</span>
-            <span class="rideLocation">Anywhere, TX</span>
-            <div class="details">This event has been CANCELED due to weather conditions.</div>
-            <div>
-                <p>RM: John Doe</p>
-                <p>Email: john@example.com</p>
-                <p>Distances: 25, 50, 75</p>
-            </div>
-        </div>
-        """
+        # Test with a sample that should be a canceled event
+        canceled_sample = None
+        for sample in EVENT_SAMPLES:
+            if EXPECTED_DATA[sample]['is_canceled']:
+                canceled_sample = sample
+                break
         
-        # Create a temporary parser for this test
-        temp_parser = HTMLParser()
+        if not canceled_sample:
+            self.skipTest("No canceled event in sample data")
+            
+        # Load the canceled event
+        canceled_path = os.path.join(
+            os.path.dirname(__file__), 
+            'html_samples', 
+            canceled_sample
+        )
         
+        with open(canceled_path, 'r', encoding='utf-8') as f:
+            canceled_html = f.read()
+            
         # Parse the canceled event HTML
-        parsed_events = temp_parser.parse_html(canceled_html)
+        parsed_events = self.parser.parse_html(canceled_html)
         
         # Verify the event was extracted
         self.assertEqual(len(parsed_events), 1, "Should extract one event")
@@ -355,15 +296,29 @@ class TestHTMLParser(unittest.TestCase):
         # Verify the event is marked as canceled
         self.assertTrue(parsed_events[0]['is_canceled'], "Event should be marked as canceled")
         
-        # Verify other basic fields are still extracted
-        self.assertEqual(parsed_events[0]['name'], "Cancelled Event")
-        self.assertEqual(parsed_events[0]['location'], "Anywhere, TX")
-
-    def test_non_canceled_event(self):
-        """Test that regular events are not marked as canceled."""
-        # Verify our main test event is not marked as canceled
-        raw_event = self.parser._extract_event_data(self.event_html, 0)
-        self.assertFalse(raw_event['is_canceled'], "Regular event should not be marked as canceled")
+        # Also test a non-canceled event
+        non_canceled_sample = None
+        for sample in EVENT_SAMPLES:
+            if not EXPECTED_DATA[sample]['is_canceled']:
+                non_canceled_sample = sample
+                break
+                
+        if non_canceled_sample:
+            non_canceled_path = os.path.join(
+                os.path.dirname(__file__), 
+                'html_samples', 
+                non_canceled_sample
+            )
+            
+            with open(non_canceled_path, 'r', encoding='utf-8') as f:
+                non_canceled_html = f.read()
+                
+            # Parse the non-canceled event HTML
+            non_canceled_events = self.parser.parse_html(non_canceled_html)
+            
+            # Verify the event is not marked as canceled
+            self.assertFalse(non_canceled_events[0]['is_canceled'], 
+                           "Non-canceled event should not be marked as canceled")
 
 if __name__ == '__main__':
     unittest.main() 

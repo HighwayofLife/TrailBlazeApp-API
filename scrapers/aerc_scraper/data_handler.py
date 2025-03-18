@@ -322,6 +322,16 @@ class DataHandler:
             return {}
             
         components = {}
+
+        # Canadian provinces list (both abbreviations and full names)
+        canadian_provinces = {
+            'AB': 'Alberta', 'BC': 'British Columbia', 'MB': 'Manitoba', 
+            'NB': 'New Brunswick', 'NL': 'Newfoundland and Labrador', 'NS': 'Nova Scotia', 
+            'NT': 'Northwest Territories', 'NU': 'Nunavut', 'ON': 'Ontario', 
+            'PE': 'Prince Edward Island', 'QC': 'Quebec', 'SK': 'Saskatchewan', 'YT': 'Yukon'
+        }
+        canadian_province_full_names = set(canadian_provinces.values())
+        canadian_province_abbrs = set(canadian_provinces.keys())
         
         # Split by comma
         parts = [part.strip() for part in location_str.split(',')]
@@ -334,6 +344,9 @@ class DataHandler:
             state_parts = parts[1].split()
             if len(state_parts) == 1:
                 components['state'] = state_parts[0]
+                # Check if it's a Canadian province
+                if components['state'] in canadian_province_abbrs:
+                    components['country'] = 'Canada'
             elif len(state_parts) >= 2:
                 # Last part might be the country
                 if state_parts[-1].lower() in ['usa', 'canada']:
@@ -341,6 +354,11 @@ class DataHandler:
                     components['state'] = ' '.join(state_parts[:-1])
                 else:
                     components['state'] = ' '.join(state_parts)
+                    # Check if any part is a Canadian province
+                    for part in state_parts:
+                        if part in canadian_province_abbrs:
+                            components['country'] = 'Canada'
+                            break
         
         # More complex: City, State, Country or Location, City, State, [Country]
         elif len(parts) >= 3:
@@ -352,20 +370,32 @@ class DataHandler:
             else:
                 components['state'] = parts[-1]
                 components['city'] = parts[-2]
+                # Check if last part is a Canadian province
+                if parts[-1].strip() in canadian_province_abbrs or any(p in parts[-1] for p in canadian_province_abbrs):
+                    components['country'] = 'Canada'
                 
         # Just one part
         elif len(parts) == 1:
             # Try to extract state from the single part
             words = parts[0].split()
             if len(words) >= 2:
-                if words[-1].upper() in ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 
-                                      'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 
-                                      'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 
-                                      'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 
-                                      'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
-                                      'AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT']:
-                    components['state'] = words[-1]
+                # US State abbreviations
+                us_states = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 
+                          'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 
+                          'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 
+                          'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 
+                          'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY']
+                
+                # Combined set of all state/province abbreviations
+                all_abbrs = set(us_states + list(canadian_province_abbrs))
+                
+                if words[-1].upper() in all_abbrs:
+                    components['state'] = words[-1].upper()
                     components['city'] = ' '.join(words[:-1])
+                    
+                    # Check if it's a Canadian province
+                    if words[-1].upper() in canadian_province_abbrs:
+                        components['country'] = 'Canada'
                 else:
                     # No clear division, assume it's all city
                     components['city'] = parts[0]
@@ -373,14 +403,15 @@ class DataHandler:
                 components['city'] = parts[0]
                 
         # Set default country if not determined
-        if 'state' in components:
-            # Check for Canadian provinces
-            if components['state'] in ['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT']:
-                components.setdefault('country', 'Canada')
+        if 'country' not in components:
+            if 'state' in components:
+                # Check for Canadian provinces
+                if components['state'] in canadian_province_abbrs:
+                    components['country'] = 'Canada'
+                else:
+                    components['country'] = 'USA'
             else:
-                components.setdefault('country', 'USA')
-        else:
-            components.setdefault('country', 'USA')
+                components['country'] = 'USA'
             
         return components
     

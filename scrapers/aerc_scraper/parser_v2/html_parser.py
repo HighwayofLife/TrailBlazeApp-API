@@ -44,7 +44,7 @@ class HTMLParser:
             List of raw event dictionaries
         """
         logger.info("Starting direct HTML parsing of AERC calendar data")
-        events = []
+        raw_events = []
         
         try:
             soup = BeautifulSoup(html, 'html.parser')
@@ -60,7 +60,7 @@ class HTMLParser:
                 try:
                     raw_event = self._extract_event_data(row, i)
                     if raw_event:
-                        events.append(raw_event)
+                        raw_events.append(raw_event)
                         self.metrics['events_extracted'] += 1
                         
                         # Log extraction details in debug mode
@@ -76,6 +76,9 @@ class HTMLParser:
                 except Exception as e:
                     self.metrics['parsing_errors'] += 1
                     logger.error(f"Error parsing row {i}: {str(e)}")
+            
+            # Combine events with the same ride_id
+            events = self._combine_events_with_same_ride_id(raw_events)
         
         except Exception as e:
             logger.error(f"Failed to parse HTML: {str(e)}")
@@ -86,6 +89,115 @@ class HTMLParser:
                    f"{self.metrics['flyer_links']} flyers, {self.metrics['map_links']} maps")
         
         return events
+    
+    def _combine_events_with_same_ride_id(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Combine events with the same ride_id into a single event.
+        
+        This handles multi-day events that may be listed as separate calendar entries
+        but should be treated as a single event in our system.
+        
+        Args:
+            events: List of raw event dictionaries
+            
+        Returns:
+            List of combined event dictionaries
+        """
+        # If there are no events, return empty list
+        if not events:
+            return []
+            
+        # Group events by ride_id
+        events_by_id = {}
+        for event in events:
+            ride_id = event.get('ride_id')
+            # If event has no ride_id, treat it as a unique event
+            if not ride_id:
+                events_by_id[f"no_id_{id(event)}"] = [event]
+                continue
+                
+            if ride_id not in events_by_id:
+                events_by_id[ride_id] = []
+            events_by_id[ride_id].append(event)
+            
+        # Combine events with the same ride_id
+        combined_events = []
+        for ride_id, events_list in events_by_id.items():
+            # If there's only one event with this ride_id, add it directly
+            if len(events_list) == 1:
+                combined_events.append(events_list[0])
+                continue
+                
+            # If there are multiple events with this ride_id, combine them
+            logger.info(f"Combining {len(events_list)} events with ride_id {ride_id}")
+            combined_event = self._merge_events(events_list)
+            combined_events.append(combined_event)
+            
+        return combined_events
+        
+    def _merge_events(self, events: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Merge multiple events with the same ride_id into a single event.
+        
+        Args:
+            events: List of event dictionaries to merge
+            
+        Returns:
+            Merged event dictionary
+        """
+        # Use the first event as the base
+        base_event = events[0].copy()
+        
+        # Initialize collection for multiple dates and distances
+        all_distances = base_event.get('distances', []).copy()
+        
+        # Track min and max dates for date_start and date_end
+        date_start = base_event.get('date_start')
+        date_end = base_event.get('date_end', date_start)
+        
+        # Merge additional events into the base event
+        for event in events[1:]:
+            # Collect all distances
+            event_distances = event.get('distances', [])
+            for distance in event_distances:
+                # Only add if not already present (avoid duplicates)
+                if distance not in all_distances:
+                    all_distances.append(distance)
+            
+            # Update date range
+            event_date = event.get('date_start')
+            if event_date:
+                if not date_start or event_date < date_start:
+                    date_start = event_date
+                if not date_end or event_date > date_end:
+                    date_end = event_date
+                    
+            # If any event is marked as having an intro ride, the combined event has one
+            if event.get('has_intro_ride', False):
+                base_event['has_intro_ride'] = True
+                
+            # If any event has a special property that the base doesn't, add it
+            for key, value in event.items():
+                if key not in base_event and value:
+                    base_event[key] = value
+        
+        # Update the base event with merged data
+        base_event['distances'] = all_distances
+        base_event['date_start'] = date_start
+        
+        # Only set date_end if it's different from date_start
+        if date_end and date_end != date_start:
+            base_event['date_end'] = date_end
+            
+        # Add a note that this is a multi-day event
+        if len(events) > 1:
+            description = base_event.get('description', '')
+            if description:
+                base_event['description'] = f"Multi-day event. {description}"
+            else:
+                base_event['description'] = "Multi-day event."
+            
+        return base_event
     
     def _extract_event_data(self, row, index: int) -> Optional[Dict[str, Any]]:
         """Extract structured data from a single event row."""
@@ -153,28 +265,39 @@ class HTMLParser:
         # Extract city, state, and country from location
         city, state, country = self._extract_city_state_country(location)
         
+        # Try to extract ride_id from the span tag attribute
+        ride_id = None
+        ride_id_elem = row.select_one('span.rideName')
+        if ride_id_elem and ride_id_elem.has_attr('tag'):
+            ride_id = ride_id_elem['tag']
+        
         # Build event object with field names matching the validator's expectations
         event = {
-            'name': name,               # Changed from 'rideName' to 'name'
-            'date_start': date,         # Changed from 'date' to 'date_start'
+            'name': name,               
+            'date_start': date,         
             'region': region,
             'location': location,
             'distances': distances,
-            'ride_manager': ride_manager, # Changed from 'rideManager' to 'ride_manager'
+            'ride_manager': ride_manager,
             'description': description,
             'directions': directions,
             'is_canceled': is_canceled,
             'has_intro_ride': has_intro_ride,
             'control_judges': control_judges,
+            'source': 'AERC',           # Required field that was missing
+            'event_type': 'endurance',  # Default for AERC events
         }
         
-        # Add city, state, and country if available
-        if city:
-            event['city'] = city
-        if state:
-            event['state'] = state
-        if country:
-            event['country'] = country
+        # Add location_details as a structured object
+        event['location_details'] = {
+            'city': city,
+            'state': state,
+            'country': country
+        }
+        
+        # Add ride_id if available
+        if ride_id:
+            event['ride_id'] = ride_id
             
         # Add coordinates if available
         if coordinates:
@@ -185,14 +308,14 @@ class HTMLParser:
             event['website'] = website
             
         if flyer_url:
-            event['flyer_url'] = flyer_url  # Changed from 'flyerUrl' to 'flyer_url'
+            event['flyer_url'] = flyer_url
             
         if map_link:
-            event['map_link'] = map_link    # Changed from 'mapLink' to 'map_link'
+            event['map_link'] = map_link
             
         # Add contact info
         if manager_email or manager_phone:
-            event['ride_manager_contact'] = {}  # Changed from 'rideManagerContact' to 'ride_manager_contact'
+            event['ride_manager_contact'] = {}
             if manager_email:
                 event['ride_manager_contact']['email'] = manager_email
             if manager_phone:
@@ -680,11 +803,22 @@ class HTMLParser:
             'SK': 'Saskatchewan', 'YT': 'Yukon'
         }
         
-        # Check for Canadian indicators
-        if any(province in location for province in canadian_provinces.keys()) or \
-           any(province in location for province in canadian_provinces.values()) or \
-           'Canada' in location:
+        # Check for explicit Canadian content first
+        if 'Canada' in location or 'Manitoba' in location:
             country = "Canada"
+            
+        # Special checks for Manitoba content
+        if 'Manitoba' in location:
+            state = 'MB'
+            
+        # Identify Canadian provinces with word boundaries and various separators
+        for province_code in canadian_provinces.keys():
+            # Check for province code with various delimiters or at the end of a string
+            if (f' {province_code}' in location or f', {province_code}' in location or 
+                f' {province_code},' in location or location.endswith(f' {province_code}')):
+                country = "Canada"
+                state = province_code
+                break
         
         # Pattern 1: "City, ST" or "City, State"
         city_state_match = re.search(r'([^,]+),\s*([A-Z]{2}|[A-Za-z\s]+)(?:,\s*(.+))?$', location)
@@ -737,35 +871,103 @@ class HTMLParser:
             
             return city, state, country
         
-        # Pattern 2: Try to find location name followed by city, state
+        # Look for location patterns with province/state at the end
+        # This handles patterns like "Belair Provincial Forest, Hwy 44 at Hwy 302, Stead MB"
+        province_pattern = re.search(r'(\w+)\s+([A-Z]{2})(?:\s|$)', location)
+        if province_pattern:
+            city_candidate = province_pattern.group(1).strip()
+            province_candidate = province_pattern.group(2).strip()
+            
+            if province_candidate in canadian_provinces:
+                country = "Canada"
+                state = province_candidate
+                city = city_candidate
+                return city, state, country
+                
+        # Look for a pattern where the city and province/state are at the end
+        # e.g., "Something, Something, City ST" or "Something, City ST"
+        end_location_pattern = re.search(r',\s*([^,]+)\s+([A-Z]{2})\s*$', location)
+        if end_location_pattern:
+            city_candidate = end_location_pattern.group(1).strip()
+            state_candidate = end_location_pattern.group(2).strip()
+            
+            # If state is a Canadian province, set country to Canada
+            if state_candidate in canadian_provinces:
+                country = "Canada"
+                
+            return city_candidate, state_candidate, country
+                
+        # General fallback for locations with commas
         location_parts = location.split(',')
         if len(location_parts) >= 2:
-            # Last part might be state or "state country"
+            # Last part might contain city and state/province
             last_part = location_parts[-1].strip()
             
-            # Check if it contains state and country
-            state_country_match = re.search(r'([A-Z]{2})\s+(.+)$', last_part)
-            if state_country_match:
-                state = state_country_match.group(1)
-                possible_country = state_country_match.group(2).strip()
-                if possible_country.lower() == 'canada':
-                    country = 'Canada'
+            # Look for patterns like "City MB" or "City, MB"
+            province_pattern = re.search(r'([^,]+)\s+([A-Z]{2})\b', last_part)
+            if province_pattern:
+                city = province_pattern.group(1).strip()
+                state = province_pattern.group(2).strip()
+                if state in canadian_provinces:
+                    country = "Canada"
             else:
-                # Just a state
-                state = last_part
-                
-            # Second to last part might be city
-            if len(location_parts) >= 2:
-                city = location_parts[-2].strip()
+                # Check if it contains state and country
+                state_country_match = re.search(r'([A-Z]{2})\s+(.+)$', last_part)
+                if state_country_match:
+                    state = state_country_match.group(1)
+                    possible_country = state_country_match.group(2).strip()
+                    if possible_country.lower() == 'canada':
+                        country = 'Canada'
+                else:
+                    # Last part might be just a state
+                    state_match = re.search(r'\b([A-Z]{2})\b', last_part)
+                    if state_match:
+                        state = state_match.group(1)
+                        
+                        # If there's more in the last part, it might be city + state
+                        city_state_split = last_part.split()
+                        if len(city_state_split) > 1 and city_state_split[-1] == state:
+                            city = ' '.join(city_state_split[:-1])
+                    
+                # If we still don't have a city, use the second to last part
+                if len(location_parts) >= 2 and not city:
+                    city = location_parts[-2].strip()
         
-        # If state contains "MB" or other Canadian province codes, set country to Canada
-        if state in canadian_provinces:
+        # Final check for Canadian provinces
+        if state and state in canadian_provinces:
             country = 'Canada'
             
-        # Special check for Canadian content in description
-        if state and city and re.search(r'\b(MB|AB|BC|SK|ON|QC|NB|NS|PE|NL|YT|NT|NU)\b', location):
+        # Special case for Manitoba/Canadian locations: check for Manitoba-related text in description
+        if (state == 'MB' or 'Manitoba' in location or
+            any(prov in location for prov in canadian_provinces.values())):
             country = 'Canada'
             
+            # If we have MB state and no city, try to extract city from the location string
+            if state == 'MB' and not city:
+                # Try to find locations commonly associated with Manitoba events
+                mb_location_match = re.search(r'(Stead|Belair|Winnipeg)', location)
+                if mb_location_match:
+                    city = mb_location_match.group(1)
+        
+        # Fallback for Canadian province but no city yet
+        if country == 'Canada' and state and not city:
+            # Look for the last comma-separated part before any mention of the province
+            prov_index = location.find(state)
+            if prov_index > 0:
+                # Get text before the province
+                before_prov = location[:prov_index].strip()
+                parts = before_prov.split(',')
+                if parts:
+                    potential_city = parts[-1].strip()
+                    # Clean up any highway references or other non-city text
+                    potential_city = re.sub(r'(Hwy|Highway|Rd|Road|St|Street|Ave|Avenue)\s+\d+.*', '', potential_city).strip()
+                    if potential_city and not potential_city.endswith(tuple(['Hwy', 'Highway', 'Rd', 'Road', 'St', 'Street', 'Ave', 'Avenue'])):
+                        city = potential_city
+        
+        # Force Canada country for MB state
+        if state == 'MB':
+            country = 'Canada'
+                
         return city, state, country
         
     def _extract_city_state(self, location: str) -> Tuple[Optional[str], Optional[str]]:
