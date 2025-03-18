@@ -29,9 +29,24 @@
 
 - **Created Documentation**: Added a `README.md` file to the `app/schemas` directory to document the schema architecture, design principles, and usage examples.
 
+### Testing Improvements
+
+- **Consolidated Tests**: Added new comprehensive test in `test_parser_with_samples.py` that combines HTML parsing with schema validation.
+- **Test Runner Prioritization**: Updated `run_tests.py` to prioritize the new consolidated test for faster feedback during development.
+- **Fixed Database Integration Tests**: Updated database integration tests to properly handle the new structured data formats.
+- **Improved Test Robustness**: Enhanced location checking in tests to handle variations in location formatting and address structures.
+- **Added Structure Validation**: Implemented tests to verify that event details are correctly preserved through the entire pipeline.
+
+### Database Schema Updates
+
+- **Added ride_id Field**: Added a new `ride_id` column to the events table to store external source system identifiers.
+- **Added has_intro_ride Flag**: Added a new boolean field to indicate events with introductory rides.
+- **Improved Field Documentation**: Enhanced column comments to describe expected formats for structured data.
+
 ### Bug Fixes
 
 - **Fixed Linter Errors**: Corrected linter errors in `app/schemas/event.py` by adding `self` to validator methods.
+- **Fixed Test Assertions**: Updated test assertions to safely handle different types of event_details objects.
 
 ### Testing
 
