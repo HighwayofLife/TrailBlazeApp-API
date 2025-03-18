@@ -48,6 +48,7 @@ class EventBase(BaseModel):
     notes: Optional[str] = None
     is_canceled: Optional[bool] = False  # Added is_canceled field with default False
     source: str  # Required field to identify the data source
+    geocoding_attempted: Optional[bool] = False  # New field to track geocoding status
 
 class EventCreate(EventBase):
     """Schema for creating an event."""
@@ -79,6 +80,7 @@ class EventUpdate(BaseModel):
     event_details: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
     is_canceled: Optional[bool] = None  # Added to allow updating canceled status
+    geocoding_attempted: Optional[bool] = None  # Added to allow updating geocoding status
 
 class EventResponse(EventBase):
     """Schema for event response."""

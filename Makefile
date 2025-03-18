@@ -7,7 +7,7 @@
 DOCKER_COMPOSE := docker-compose
 PROJECT_NAME := trailblaze
 
-.PHONY: help build up down restart status logs test test-api test-unit test-integration test-scraper check-db clean docs version check-env health setup-local setup-test-db clean-test-db test-sequential enrich-geocode enrich-website
+.PHONY: help build up down restart status logs test test-api test-unit test-integration test-scraper check-db clean docs version check-env health setup-local setup-test-db clean-test-db test-sequential enrich-geocode enrich-website test-aerc-scraper test-aerc-db-validation
 
 # Colors for terminal output
 GREEN := \033[0;32m
@@ -130,6 +130,28 @@ test-scraper: setup-test-db ## Run scraper tests
 		-e AERC_VALIDATE=true \
 		-e LOG_LEVEL=DEBUG \
 		test pytest tests/scrapers
+
+test-aerc-scraper: setup-test-db ## Run AERC scraper tests
+	$(DOCKER_COMPOSE) run --rm \
+		-e PYTHONPATH=/app \
+		-e AERC_GEMINI_API_KEY=test_key \
+		-e AERC_DEBUG_MODE=true \
+		-e AERC_REFRESH_CACHE=true \
+		-e AERC_VALIDATE=true \
+		-e LOG_LEVEL=DEBUG \
+		test pytest scrapers/aerc_scraper/tests
+
+test-aerc-db-validation: setup-test-db ## Run AERC database validation tests
+	@echo "${BLUE}Running AERC scraper database validation tests...${NC}"
+	$(DOCKER_COMPOSE) run --rm \
+		-e PYTHONPATH=/app \
+		-e AERC_GEMINI_API_KEY=test_key \
+		-e AERC_DEBUG_MODE=true \
+		-e AERC_REFRESH_CACHE=true \
+		-e AERC_VALIDATE=true \
+		-e LOG_LEVEL=DEBUG \
+		test python -m scrapers.aerc_scraper.tests.run_database_validation
+	@echo "${GREEN}AERC database validation tests complete!${NC}"
 
 # Database Commands
 check-db: ## Check database connectivity
