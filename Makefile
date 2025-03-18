@@ -149,11 +149,37 @@ migrate-create: ## Create a new migration
 scraper-%: ## Run a specific scraper (e.g. make scraper-aerc_calendar)
 	$(DOCKER_COMPOSE) run --rm scraper python -m scrapers.run_scrapers $*
 
+# Improved AERC Scraper Command
+scraper-aerc-v2: ## Run the improved AERC scraper with direct HTML parsing
+	@echo "${BLUE}Running improved AERC scraper (v2)...${NC}"
+	$(DOCKER_COMPOSE) run --rm \
+		-e SCRAPER_DEBUG=${SCRAPER_DEBUG:-false} \
+		-e SCRAPER_REFRESH=${SCRAPER_REFRESH:-false} \
+		-e LOG_LEVEL=${LOG_LEVEL:-INFO} \
+		scraper python -m scrapers.run_aerc_v2
+	@echo "${GREEN}Improved AERC scraper (v2) complete!${NC}"
+
 # Enrichment Commands
-enrich-geocode: ## Run the geocoding enrichment service
-	@echo "${BLUE}Running geocoding enrichment...${NC}"
+enrich-geocode: ## Run the geocoding enrichment service (default: test with 3 events)
+	@echo "${BLUE}Running geocoding enrichment on a test sample of 3 events...${NC}"
 	$(DOCKER_COMPOSE) run --rm api python -m scripts.geocode_events
+	@echo "${GREEN}Geocoding test enrichment complete!${NC}"
+	@echo "To geocode more events, use: make enrich-geocode-more LIMIT=10"
+	@echo "To geocode all events, use: make enrich-geocode-all"
+
+enrich-geocode-more: ## Run geocoding on a specific number of events (specify with LIMIT=X)
+	@if [ -z "$(LIMIT)" ]; then \
+		echo "${YELLOW}Please specify a limit. Example: make enrich-geocode-more LIMIT=10${NC}"; \
+		exit 1; \
+	fi
+	@echo "${BLUE}Running geocoding enrichment on $(LIMIT) events...${NC}"
+	$(DOCKER_COMPOSE) run --rm api python -m scripts.geocode_events --limit $(LIMIT)
 	@echo "${GREEN}Geocoding enrichment complete!${NC}"
+
+enrich-geocode-all: ## Run geocoding on all events that need coordinates
+	@echo "${BLUE}Running geocoding enrichment on all events...${NC}"
+	$(DOCKER_COMPOSE) run --rm api python -m scripts.geocode_events --all
+	@echo "${GREEN}Geocoding enrichment of all events complete!${NC}"
 
 enrich-website: ## Run the website/flyer enrichment service
 	@echo "${BLUE}Running website/flyer enrichment...${NC}"
