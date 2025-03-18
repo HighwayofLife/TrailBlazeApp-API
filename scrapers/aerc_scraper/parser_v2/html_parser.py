@@ -189,14 +189,31 @@ class HTMLParser:
         if date_end and date_end != date_start:
             base_event['date_end'] = date_end
             
-        # Add a note that this is a multi-day event
+        # Set event duration flags and ride days
         if len(events) > 1:
-            description = base_event.get('description', '')
-            if description:
-                base_event['description'] = f"Multi-day event. {description}"
-            else:
-                base_event['description'] = "Multi-day event."
+            base_event['is_multi_day_event'] = True
             
+            # Calculate ride days - either from date range or number of events
+            if date_start and date_end and date_end != date_start:
+                # Convert string dates to datetime objects before subtraction
+                from datetime import datetime
+                try:
+                    start_date_obj = datetime.strptime(date_start, '%Y-%m-%d')
+                    end_date_obj = datetime.strptime(date_end, '%Y-%m-%d')
+                    delta = end_date_obj - start_date_obj
+                    ride_days = delta.days + 1  # Include both start and end day
+                except ValueError:
+                    # If date parsing fails, fall back to number of events
+                    ride_days = len(events)
+            else:
+                # If dates aren't reliable, use the number of events as an approximation
+                ride_days = len(events)
+                
+            base_event['ride_days'] = ride_days
+            
+            # Set pioneer ride flag (3+ days)
+            base_event['is_pioneer_ride'] = ride_days >= 3
+        
         return base_event
     
     def _extract_event_data(self, row, index: int) -> Optional[Dict[str, Any]]:
@@ -286,6 +303,10 @@ class HTMLParser:
             'control_judges': control_judges,
             'source': 'AERC',           # Required field that was missing
             'event_type': 'endurance',  # Default for AERC events
+            # Default values for multi-day event flags - these will be updated during event merging if needed
+            'is_multi_day_event': False,
+            'is_pioneer_ride': False,
+            'ride_days': 1
         }
         
         # Add location_details as a structured object

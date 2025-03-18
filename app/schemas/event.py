@@ -190,6 +190,11 @@ class EventBase(BaseModel):
     date_end: Optional[datetime] = None
     location: str
     
+    # Event duration flags and calculations
+    is_multi_day_event: Optional[bool] = Field(default=False, description="Flag indicating if event spans multiple days")
+    is_pioneer_ride: Optional[bool] = Field(default=False, description="Flag indicating if event is a pioneer ride (3+ days)")
+    ride_days: Optional[int] = Field(default=None, description="Number of days the event spans")
+    
     # Additional descriptive fields
     description: Optional[str] = None
     region: Optional[str] = None
@@ -236,6 +241,29 @@ class EventBase(BaseModel):
         values = info.data
         if not v and 'date_start' in values:
             return values['date_start']
+        return v
+    
+    @field_validator('ride_days', 'is_multi_day_event', 'is_pioneer_ride')
+    def calculate_event_duration_flags(cls, v, info):
+        """Calculate ride days and event flags based on start and end dates."""
+        values = info.data
+        field_name = info.field_name
+        
+        # Skip if we don't have both start and end dates
+        if not values.get('date_start') or not values.get('date_end'):
+            return v
+            
+        # Calculate days between start and end date
+        delta = values['date_end'] - values['date_start']
+        days = delta.days + 1  # Include both start and end days
+        
+        if field_name == 'ride_days':
+            return days
+        elif field_name == 'is_multi_day_event':
+            return days > 1
+        elif field_name == 'is_pioneer_ride':
+            return days >= 3
+            
         return v
     
     model_config = ConfigDict(

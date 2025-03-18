@@ -232,6 +232,22 @@ class TestHTMLParser(unittest.TestCase):
                 self.assertEqual(parsed['date_start'], expected['date_start'])
                 self.assertEqual(parsed['is_canceled'], expected['is_canceled'])
                 
+                # Verify multi-day event flags
+                if 'is_multi_day_event' in expected:
+                    is_multi_day = parsed.get('is_multi_day_event', False)
+                    self.assertEqual(is_multi_day, expected['is_multi_day_event'],
+                                    f"Expected is_multi_day_event={expected['is_multi_day_event']}, got {is_multi_day}")
+                
+                if 'is_pioneer_ride' in expected:
+                    is_pioneer = parsed.get('is_pioneer_ride', False)
+                    self.assertEqual(is_pioneer, expected['is_pioneer_ride'],
+                                    f"Expected is_pioneer_ride={expected['is_pioneer_ride']}, got {is_pioneer}")
+                
+                if 'ride_days' in expected:
+                    ride_days = parsed.get('ride_days', 1)
+                    self.assertEqual(ride_days, expected['ride_days'],
+                                    f"Expected ride_days={expected['ride_days']}, got {ride_days}")
+                
                 # Check location_details if present
                 if 'location_details' in expected:
                     self.assertIn('location_details', parsed)
@@ -319,6 +335,76 @@ class TestHTMLParser(unittest.TestCase):
             # Verify the event is not marked as canceled
             self.assertFalse(non_canceled_events[0]['is_canceled'], 
                            "Non-canceled event should not be marked as canceled")
+    
+    def test_multi_day_event_detection(self):
+        """Test detection of multi-day events and pioneer rides."""
+        # Find a multi-day event sample
+        multi_day_sample = None
+        for sample in EVENT_SAMPLES:
+            if EXPECTED_DATA[sample]['is_multi_day_event']:
+                multi_day_sample = sample
+                break
+        
+        if not multi_day_sample:
+            self.skipTest("No multi-day event in sample data")
+            
+        # Load the multi-day event
+        multi_day_path = os.path.join(
+            os.path.dirname(__file__), 
+            'html_samples', 
+            multi_day_sample
+        )
+        
+        with open(multi_day_path, 'r', encoding='utf-8') as f:
+            multi_day_html = f.read()
+            
+        # Parse the multi-day event HTML
+        parsed_events = self.parser.parse_html(multi_day_html)
+        
+        # Verify the event was extracted
+        self.assertEqual(len(parsed_events), 1, "Should extract one event")
+        
+        # Verify multi-day flags
+        self.assertTrue(parsed_events[0]['is_multi_day_event'], 
+                        "Event should be marked as multi-day")
+        
+        # Verify pioneer ride flag if applicable
+        expected_is_pioneer = EXPECTED_DATA[multi_day_sample]['is_pioneer_ride']
+        self.assertEqual(parsed_events[0]['is_pioneer_ride'], expected_is_pioneer,
+                         f"Pioneer ride flag should be {expected_is_pioneer}")
+        
+        # Verify ride days
+        expected_ride_days = EXPECTED_DATA[multi_day_sample]['ride_days']
+        self.assertEqual(parsed_events[0]['ride_days'], expected_ride_days,
+                         f"Ride days should be {expected_ride_days}")
+        
+        # Also test a single-day event
+        single_day_sample = None
+        for sample in EVENT_SAMPLES:
+            if not EXPECTED_DATA[sample]['is_multi_day_event']:
+                single_day_sample = sample
+                break
+                
+        if single_day_sample:
+            single_day_path = os.path.join(
+                os.path.dirname(__file__), 
+                'html_samples', 
+                single_day_sample
+            )
+            
+            with open(single_day_path, 'r', encoding='utf-8') as f:
+                single_day_html = f.read()
+                
+            # Parse the single-day event HTML
+            single_day_events = self.parser.parse_html(single_day_html)
+            
+            # Verify the event is not marked as multi-day
+            self.assertFalse(single_day_events[0].get('is_multi_day_event', False), 
+                           "Single-day event should not be marked as multi-day")
+            
+            # Verify not a pioneer ride
+            self.assertFalse(single_day_events[0].get('is_pioneer_ride', False),
+                          "Single-day event should not be marked as pioneer ride")
 
 if __name__ == '__main__':
     unittest.main() 

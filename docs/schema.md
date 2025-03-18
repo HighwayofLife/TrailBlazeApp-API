@@ -25,6 +25,9 @@ The `events` table stores information about each endurance riding event.
 | `ride_id`            | String         | The original ID of the event from the source system (e.g., AERC tag ID).                                                                                                                                                                |
 | `has_intro_ride`     | Boolean        | Indicates whether the event has an introductory ride option.                                                                                                                                                                            |
 | `is_canceled`        | Boolean        | Indicates whether the event has been canceled.                                                                                                                                                                                          |
+| `is_multi_day_event` | Boolean        | Indicates whether the event spans multiple days.                                                                                                                                                                                        |
+| `is_pioneer_ride`    | Boolean        | Indicates whether the event is a pioneer ride (spans 3 or more days).                                                                                                                                                                   |
+| `ride_days`          | Integer        | The number of days the event spans.                                                                                                                                                                                                     |
 | `event_details`      | JSON           | A JSON object containing additional structured event details (see below).                                                                                                                                                               |
 | `latitude`           | Float          | The latitude of the event location (if geocoding is successful).                                                                                                                                                                        |
 | `longitude`          | Float          | The longitude of the event location (if geocoding is successful).                                                                                                                                                                       |
@@ -56,7 +59,10 @@ The `event_details` column stores structured data that may vary by event source.
     {"distance": "25 miles", "date": "Mar 28, 2025", "start_time": "08:00 am"}
   ],
   "description": "Detailed event description",
-  "directions": "Directions to the event"
+  "directions": "Directions to the event",
+  "is_multi_day_event": true,
+  "is_pioneer_ride": false,
+  "ride_days": 2
 }
 ```
 

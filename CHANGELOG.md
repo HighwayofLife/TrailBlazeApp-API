@@ -57,3 +57,15 @@
 ### Testing
 
 - **Verified Imports**: Confirmed that all schema imports work as expected by running tests.
+
+### AERC Scraper Improvements
+
+- **Implemented Multi-Day Event Support**: Enhanced the AERC scraper to correctly identify and process multi-day events, including pioneer rides.
+    - Fixed date parsing in the `_merge_events` method to handle string dates correctly by converting them to datetime objects before subtraction.
+    - Ensured correct setting of `is_multi_day_event`, `is_pioneer_ride`, and `ride_days` flags during event merging.
+- **Improved Test Coverage**:
+    - Added a new test method `test_multi_day_event_detection` to verify the detection of multi-day events and pioneer rides.
+    - Updated the `test_full_parsing_flow` method to validate the correct setting of new fields (`is_multi_day_event`, `is_pioneer_ride`, and `ride_days`).
+- **Fixed Schema Validation**:
+    - Updated schema tests to correctly validate the `location` field as a string.
+    - Explicitly set `is_multi_day_event`, `is_pioneer_ride`, and `ride_days` flags in tests to ensure correct validation.

@@ -1,6 +1,11 @@
 """
 OpenAPI schema definitions for the events API.
 These schemas document the structure of API requests and responses.
+
+Event objects include the following fields related to multi-day events:
+- is_multi_day_event: Boolean flag indicating if an event spans multiple days
+- is_pioneer_ride: Boolean flag indicating if an event is a pioneer ride (3+ days)
+- ride_days: Integer count of how many days the event spans
 """
 
 # Get all events - 200 success response
