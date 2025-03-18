@@ -120,19 +120,21 @@ class DataHandler:
             EventCreate: Event in format ready for storage
         """
         # Extract location as string
-        location_str = aerc_event.location.name
-        if aerc_event.location.city:
-            if location_str and not location_str.endswith(aerc_event.location.city):
+        location_str = aerc_event.location.name if aerc_event.location.name else ""
+        
+        # Only add city if it's not already in the name
+        if aerc_event.location.city and (not location_str or aerc_event.location.city not in location_str):
+            if location_str:
                 location_str += f", {aerc_event.location.city}"
             else:
                 location_str = aerc_event.location.city
                 
-        if aerc_event.location.state:
+        # Only add state if it's not already in the name or city
+        if aerc_event.location.state and aerc_event.location.state not in location_str:
             location_str += f", {aerc_event.location.state}"
         
-        # Add country to location string if not USA
-        if aerc_event.location.country and aerc_event.location.country != "USA":
-            location_str += f", {aerc_event.location.country}"
+        # For non-USA countries, we only add country to location_details, not to the location string
+        # This matches the expected format in the tests
                 
         # Format distances as strings with start time information if available
         distance_strings = []
@@ -240,7 +242,7 @@ class DataHandler:
         # Convert to EventCreate
         return EventCreate(
             name=aerc_event.name,
-            source=str(aerc_event.source.value),  # Convert enum to string
+            source=str(aerc_event.source.value),  # Keep enum value as is (uppercase)
             event_type=str(aerc_event.event_type.value),  # Convert enum to string 
             date_start=aerc_event.date_start,
             date_end=aerc_event.date_end,
@@ -266,7 +268,8 @@ class DataHandler:
         Example inputs:
         - "Ride Name - City, ST"
         - "City, State"
-        - "Location Name"
+        - "Location Name, City, ST 12345"
+        - "Venue Name, City ST"
         """
         parts = {'name': None, 'city': None, 'state': None}
         
@@ -279,16 +282,53 @@ class DataHandler:
             parts['name'] = name_parts[0].strip()
             location_str = name_parts[1].strip()
         
-        # Try to extract city and state
+        # Try to extract city, state and zip
+        # Common patterns:
+        # - Location, City, ST zipcode
+        # - Location, City ST
+        # - City, ST zipcode
         location_parts = location_str.split(',')
-        if len(location_parts) > 1:
-            parts['city'] = location_parts[0].strip()
-            parts['state'] = location_parts[1].strip()
-            # We don't set the name here to match test expectations
-            # The name will be set in transform_and_validate if needed
-        else:
+        
+        if len(location_parts) >= 2:
+            # Last part typically contains state and possibly zip
+            state_part = location_parts[-1].strip()
+            # Second to last part is typically city
+            city_part = location_parts[-2].strip()
+            
+            # Check if we have a name from the dash split earlier
+            if not parts['name'] and len(location_parts) > 2:
+                # If we have more than 2 parts and no name yet, 
+                # the first part is likely the location name
+                parts['name'] = location_parts[0].strip()
+            
+            # Extract state from the last part (might include zip)
+            # State is typically 2 letters or a full state name
+            import re
+            state_match = re.search(r'\b([A-Z]{2})\b|\b(MB|AB|BC|ON|QC|SK|NL|PE|NS|NT|YT|NU)\b', state_part)
+            if state_match:
+                state_code = state_match.group(0)
+                parts['state'] = state_code
+                
+                # City is the second to last part, unless it contains state
+                if state_code not in city_part:
+                    parts['city'] = city_part
+                else:
+                    # If city part contains state code, extract city
+                    city_match = re.search(r'^(.*?)\s+' + state_code, city_part)
+                    if city_match:
+                        parts['city'] = city_match.group(1).strip()
+            else:
+                # No state code found, treat last part as state
+                parts['state'] = state_part
+                parts['city'] = city_part
+                
+        elif len(location_parts) == 1 and not parts['name']:
             # If no comma, treat the whole string as the name
             parts['name'] = location_str.strip()
+            
+        # If we still have no name, use the full location string
+        if not parts['name']:
+            parts['name'] = location_str
             
         return parts
 
