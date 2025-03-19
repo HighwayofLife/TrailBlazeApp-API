@@ -7,16 +7,16 @@ import sys
 import os
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
-
-# Add the project root directory to the Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import logging.config
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.database import async_session
 from app.services.scraper_service import run_scraper
 from app.logging_config import get_logger, configure_logging
-import logging.config
+
+# Add the project root directory to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Configure logging
 logging.config.dictConfig(configure_logging())
@@ -27,34 +27,34 @@ async def validate_database_connection(db: AsyncSession) -> bool:
     try:
         # Test database connection
         await db.execute(text("SELECT 1"))
-        
+
         # Check if events table exists and has the expected columns
         result = await db.execute(text("""
-            SELECT column_name 
-            FROM information_schema.columns 
+            SELECT column_name
+            FROM information_schema.columns
             WHERE table_name = 'events'
         """))
         columns = [row[0].lower() for row in result]  # Convert to lowercase for case-insensitive comparison
-        
+
         logger.info(f"Found columns in events table: {columns}")
-        
+
         required_columns = [
-            'name', 'location', 'date_start', 'date_end', 
+            'name', 'location', 'date_start', 'date_end',
             'organizer', 'event_type', 'source'
         ]
-        
+
         # Convert required columns to lowercase for case-insensitive comparison
         required_columns_lower = [col.lower() for col in required_columns]
-        
+
         missing_columns = [col for col in required_columns_lower if col not in columns]
         if missing_columns:
             logger.error(f"Missing required columns in events table: {missing_columns}")
             logger.error(f"Available columns: {columns}")
             # For now, let's continue even if columns are missing
             return True
-            
+
         return True
-        
+
     except Exception as e:
         logger.error(f"Database validation failed: {e}")
         return False
@@ -63,7 +63,7 @@ async def get_scraping_stats(db: AsyncSession, days: int = 7) -> Dict[str, Any]:
     """Get statistics about recent scraping activity."""
     try:
         cutoff_date = datetime.now() - timedelta(days=days)
-        
+
         # Get event counts by source
         result = await db.execute(text("""
             SELECT source, COUNT(*) as count
@@ -71,15 +71,15 @@ async def get_scraping_stats(db: AsyncSession, days: int = 7) -> Dict[str, Any]:
             WHERE created_at >= :cutoff_date
             GROUP BY source
         """), {"cutoff_date": cutoff_date})
-        
+
         stats = {
             "period_days": days,
             "events_by_source": dict(result.fetchall()),
             "total_events": sum(dict(result.fetchall()).values())
         }
-        
+
         return stats
-        
+
     except Exception as e:
         logger.error(f"Failed to get scraping stats: {e}")
         return {}
@@ -87,16 +87,16 @@ async def get_scraping_stats(db: AsyncSession, days: int = 7) -> Dict[str, Any]:
 async def run_all_scrapers() -> None:
     """Run all available scrapers."""
     scraper_ids = ["aerc_calendar"]  # Add more scrapers as they're implemented
-    
+
     async with async_session() as db:
         # Validate database first
         if not await validate_database_connection(db):
             logger.error("Database validation failed. Aborting scraper run.")
             return
-            
+
         # Get initial stats
         initial_stats = await get_scraping_stats(db, days=1)
-        
+
         # Run scrapers
         results = []
         for scraper_id in scraper_ids:
@@ -111,10 +111,10 @@ async def run_all_scrapers() -> None:
                     "scraper": scraper_id,
                     "result": {"status": "error", "message": str(e)}
                 })
-        
+
         # Get final stats
         final_stats = await get_scraping_stats(db, days=1)
-        
+
         # Calculate and log summary
         logger.info("=== Scraping Run Summary ===")
         logger.info(f"Scrapers run: {len(scraper_ids)}")
@@ -133,9 +133,9 @@ async def run_specific_scrapers(scraper_ids: List[str]) -> None:
         if not await validate_database_connection(db):
             logger.error("Database validation failed. Aborting scraper run.")
             return
-            
+
         initial_stats = await get_scraping_stats(db, days=1)
-        
+
         for scraper_id in scraper_ids:
             try:
                 logger.info(f"Running scraper: {scraper_id}")
@@ -143,9 +143,9 @@ async def run_specific_scrapers(scraper_ids: List[str]) -> None:
                 logger.info(f"Scraper result: {result}")
             except Exception as e:
                 logger.error(f"Error running scraper {scraper_id}: {e}")
-        
+
         final_stats = await get_scraping_stats(db, days=1)
-        
+
         # Log summary for specific scrapers
         logger.info("=== Scraping Run Summary ===")
         for scraper_id in scraper_ids:
@@ -157,14 +157,14 @@ async def main() -> None:
     """Main entry point."""
     try:
         args = sys.argv[1:]
-        
+
         if not args:
             # No arguments, run all scrapers
             await run_all_scrapers()
         else:
             # Run specified scrapers
             await run_specific_scrapers(args)
-            
+
     except KeyboardInterrupt:
         logger.info("Scraping interrupted by user")
     except Exception as e:
