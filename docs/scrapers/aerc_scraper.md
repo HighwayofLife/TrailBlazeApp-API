@@ -64,5 +64,9 @@ This approach avoids unnecessary geocoding requests for events that already have
 
 ## Next Steps
 
-*   Validate inserted data into the database matches the expected data structure.
-* Implement selective geocoding as described above. 
+*   ~~Validate inserted data into the database matches the expected data structure.~~ **Completed**: Implemented and validated data integrity with `test_database_match_expected_data`.
+*   ~~Implement selective geocoding as described above.~~
+    *   **Implement Selective Geocoding**:
+        *   Address the skipped tests in `test_distance_handling.py` and `test_html_to_database_integration.py` to improve test coverage.
+        *   Implement logic to selectively geocode events that are missing coordinates in the database.
+        *   Update the `geocoding_attempted` flag to track geocoding status. 

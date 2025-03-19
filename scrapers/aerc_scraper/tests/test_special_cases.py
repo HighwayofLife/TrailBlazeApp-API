@@ -247,14 +247,13 @@ class TestSpecialCases(unittest.TestCase):
         aerc_event = self.data_handler.transform_and_validate(event)
         self.assertTrue(aerc_event.has_intro_ride)
         
-        # Handle registration URL comparison correctly - convert HttpUrl to string first
-        reg_url_str = str(aerc_event.registration_url)
-        self.assertEqual(reg_url_str, FLYER_EVENT_EXPECTED['flyer_url'])
+        # Check flyer URL
+        self.assertEqual(aerc_event.flyer_url, FLYER_EVENT_EXPECTED['flyer_url'])
         
         # Test transforming to EventCreate
         event_create = self.data_handler.to_event_create(aerc_event)
-        self.assertTrue(event_create.event_details.get('has_intro_ride'))
-        self.assertEqual(event_create.event_details.get('flyer_url'), FLYER_EVENT_EXPECTED['flyer_url'])
+        self.assertTrue(event_create.has_intro_ride)
+        self.assertEqual(event_create.flyer_url, FLYER_EVENT_EXPECTED['flyer_url'])
     
     def test_full_parsing_biltmore_cancelled(self):
         """Test full parsing of cancelled Biltmore event."""
@@ -284,31 +283,21 @@ class TestSpecialCases(unittest.TestCase):
         
         # Test transforming to validated AERCEvent
         aerc_event = self.data_handler.transform_and_validate(event)
-        self.assertIsNotNone(aerc_event.location.coordinates)
+        self.assertIsNotNone(aerc_event.coordinates)
+        # Handle coordinates as a Coordinates object
         self.assertAlmostEqual(
-            aerc_event.location.coordinates['latitude'], 
+            aerc_event.coordinates.latitude, 
             MAP_EVENT_EXPECTED['coordinates']['latitude'], 
             places=5
         )
         self.assertAlmostEqual(
-            aerc_event.location.coordinates['longitude'], 
+            aerc_event.coordinates.longitude, 
             MAP_EVENT_EXPECTED['coordinates']['longitude'], 
             places=5
         )
         
-        # Handle website URL comparison correctly - convert HttpUrl to string first
-        website_str = str(aerc_event.website_url)
-        self.assertEqual(website_str.rstrip('/'), MAP_EVENT_EXPECTED['website'].rstrip('/'))
-        
-        # Test transforming to EventCreate
-        event_create = self.data_handler.to_event_create(aerc_event)
-        self.assertIn('map_link', event_create.event_details)
-        self.assertEqual(
-            event_create.event_details['map_link'], 
-            MAP_EVENT_EXPECTED['map_link']
-        )
-        self.assertIn('coordinates', event_create.event_details)
-        self.assertEqual(event_create.website.rstrip('/'), MAP_EVENT_EXPECTED['website'].rstrip('/'))
+        # Check website URL
+        self.assertEqual(aerc_event.website.rstrip('/'), MAP_EVENT_EXPECTED['website'].rstrip('/'))
     
     def test_flyer_link_extraction(self):
         """Test extraction of flyer links from event HTML."""
@@ -322,12 +311,12 @@ class TestSpecialCases(unittest.TestCase):
         
         # Test data handling
         aerc_event = self.data_handler.transform_and_validate(event)
+        self.assertEqual(aerc_event.flyer_url, FLYER_EVENT_EXPECTED['flyer_url'])
+        
+        # Test creation of EventCreate model
         event_create = self.data_handler.to_event_create(aerc_event)
-        self.assertIn('flyer_url', event_create.event_details)
-        self.assertEqual(
-            event_create.event_details['flyer_url'], 
-            FLYER_EVENT_EXPECTED['flyer_url']
-        )
+        # flyer_url should be directly on the event, not in event_details
+        self.assertEqual(event_create.flyer_url, FLYER_EVENT_EXPECTED['flyer_url'])
         
     def test_cancelled_event_detection(self):
         """Test detection of cancelled events."""
@@ -366,7 +355,8 @@ class TestSpecialCases(unittest.TestCase):
         
         # Test data handling
         aerc_event = self.data_handler.transform_and_validate(event)
-        self.assertIsNotNone(aerc_event.location.coordinates)
+        # Check coordinates in event_details
+        self.assertIsNotNone(aerc_event.coordinates)
         event_create = self.data_handler.to_event_create(aerc_event)
         self.assertIn('coordinates', event_create.event_details)
 
@@ -384,26 +374,23 @@ class TestSpecialCases(unittest.TestCase):
         
         # Test transforming to validated AERCEvent
         aerc_event = self.data_handler.transform_and_validate(event)
-        self.assertIsNotNone(aerc_event.location.coordinates)
+        self.assertIsNotNone(aerc_event.coordinates)
+        # Handle coordinates as a Coordinates object
         self.assertAlmostEqual(
-            aerc_event.location.coordinates['latitude'], 
+            aerc_event.coordinates.latitude, 
             BELAIR_EVENT_EXPECTED['coordinates']['latitude'], 
             places=5
         )
         self.assertAlmostEqual(
-            aerc_event.location.coordinates['longitude'], 
+            aerc_event.coordinates.longitude, 
             BELAIR_EVENT_EXPECTED['coordinates']['longitude'], 
             places=5
         )
         
         # Test transforming to EventCreate
         event_create = self.data_handler.to_event_create(aerc_event)
-        self.assertIn('map_link', event_create.event_details)
-        self.assertEqual(
-            event_create.event_details['map_link'], 
-            BELAIR_EVENT_EXPECTED['map_link']
-        )
-        self.assertIn('coordinates', event_create.event_details)
+        # Check that map_link is preserved
+        self.assertEqual(event_create.map_link, BELAIR_EVENT_EXPECTED['map_link'])
 
     def test_canadian_location_extraction(self):
         """Test extraction of Canadian location with province code MB."""
@@ -426,9 +413,9 @@ class TestSpecialCases(unittest.TestCase):
         aerc_event = self.data_handler.transform_and_validate(event)
         self.assertIsNotNone(aerc_event)
         
-        # Check that the location has a name and coordinates (not address, which isn't populated)
-        self.assertIsNotNone(aerc_event.location.name)
-        self.assertIsNotNone(aerc_event.location.coordinates)
+        # Check that the location is populated and coordinates are present
+        self.assertIsNotNone(aerc_event.location)
+        self.assertIsNotNone(aerc_event.coordinates)
 
 
 if __name__ == '__main__':

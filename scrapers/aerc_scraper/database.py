@@ -3,8 +3,14 @@ Database operations handler for storing and updating events.
 """
 
 import logging
-from typing import Dict, List, Any
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Dict, List, Any, Tuple, Optional
+
+# Try to import AsyncSession, fallback to a type annotation string for linting
+try:
+    from sqlalchemy.ext.asyncio import AsyncSession
+except ImportError:
+    AsyncSession = 'AsyncSession'
+
 from app.schemas.event import EventCreate
 from app.crud.event import create_event, get_events, update_event
 from .exceptions import DatabaseError
@@ -14,157 +20,138 @@ from app.logging_config import get_logger
 logger = get_logger("scrapers.aerc_scraper.database")
 
 class DatabaseHandler:
-    """Handles database operations for events."""
-    
+    """Handler for database operations."""
+
     def __init__(self):
+        """Initialize a new DatabaseHandler."""
         self.metrics = {
-            'added': 0,
-            'updated': 0,
-            'skipped': 0,
-            'errors': 0
+            "added": 0,
+            "updated": 0,
+            "skipped": 0,
+            "errors": 0
         }
-    
-    async def store_events(self, db_events: List[EventCreate], db: AsyncSession) -> Dict[str, int]:
+
+    async def store_events(self, events: List[EventCreate], db: AsyncSession) -> Dict[str, int]:
         """
-        Store events in the database with improved error handling and verification.
-        
+        Store a list of events in the database.
+
+        Events are checked against existing entries to avoid duplicates.
+
         Args:
-            db_events: List of events to store
+            events: List of EventCreate objects to store
             db: Database session
-            
+
         Returns:
-            Dictionary with metrics (added, updated, skipped, errors)
+            Dictionary with operation metrics
         """
-        try:
-            logger.info(f"Starting to store {len(db_events)} events in database")
-            
-            # Process events in smaller batches for better transaction management
-            batch_size = 20
-            total_batches = (len(db_events) + batch_size - 1) // batch_size  # Ceiling division
-            
-            for batch_index in range(total_batches):
-                start_idx = batch_index * batch_size
-                end_idx = min(start_idx + batch_size, len(db_events))
-                current_batch = db_events[start_idx:end_idx]
-                
-                logger.info(f"Processing batch {batch_index+1}/{total_batches} with {len(current_batch)} events")
-                
-                # Events successfully processed in this batch
-                batch_success_ids = []
-                batch_metrics = {'added': 0, 'updated': 0, 'skipped': 0, 'errors': 0}
-                
-                # Process each event in the batch
-                for event in current_batch:
-                    try:
-                        # Log event details before processing
-                        logger.debug(f"Processing event: {event.name} ({event.date_start})")
-                        
-                        # Check if event exists (by name and date)
-                        existing_events = await get_events(
-                            db,
-                            date_from=event.date_start.isoformat() if event.date_start else None,
-                            date_to=event.date_start.isoformat() if event.date_start else None
-                        )
-                        
-                        exists = False
-                        existing_id = None
-                        existing_is_canceled = None
-                        
-                        for existing in existing_events:
-                            if existing.name == event.name and existing.location == event.location:
-                                exists = True
-                                existing_id = existing.id
-                                existing_is_canceled = existing.is_canceled
-                                logger.debug(f"Found existing event: ID={existing_id}, Canceled={existing_is_canceled}")
-                                break
-                        
-                        if exists:
-                            if existing_is_canceled:
-                                logger.info(f"Skipping canceled event: {event.name}")
-                                batch_metrics['skipped'] += 1
-                            else:
-                                # Update the existing event
-                                from app.schemas.event import EventUpdate
-                                event_data = event.dict()
-                                event_update = EventUpdate(**event_data)
-                                
-                                # Don't perform geocoding during scraper updates
-                                updated_event = await update_event(db, existing_id, event_update, perform_geocoding=False)
-                                
-                                if updated_event:
-                                    logger.info(f"Updated existing event: {event.name} (ID: {existing_id})")
-                                    batch_metrics['updated'] += 1
-                                    batch_success_ids.append(existing_id)
-                                else:
-                                    logger.error(f"Failed to update event: {event.name} (ID: {existing_id})")
-                                    batch_metrics['errors'] += 1
-                        else:
-                            # Create the new event (without automatic geocoding)
-                            new_event = await create_event(db, event, perform_geocoding=False)
-                            
-                            if new_event and new_event.id:
-                                logger.info(f"Added new event: {event.name} (ID: {new_event.id})")
-                                batch_metrics['added'] += 1
-                                batch_success_ids.append(new_event.id)
-                            else:
-                                logger.error(f"Failed to add new event: {event.name}")
-                                batch_metrics['errors'] += 1
-                        
-                    except Exception as e:
-                        logger.error(f"Error processing event {event.name}: {str(e)}")
-                        batch_metrics['errors'] += 1
-                
-                # Commit the batch
-                await db.commit()
-                
-                # Verify batch results
-                if batch_metrics['added'] > 0 or batch_metrics['updated'] > 0:
-                    try:
-                        # Verify that the events are actually in the database
-                        verified_count = 0
-                        for event_id in batch_success_ids:
-                            from app.models import Event as EventModel
-                            result = await db.execute(f"SELECT COUNT(*) FROM events WHERE id = {event_id}")
-                            count = result.scalar()
-                            if count == 1:
-                                verified_count += 1
-                            else:
-                                logger.warning(f"Event ID {event_id} not found in database after insertion/update")
-                        
-                        # Log verification results
-                        verification_pct = (verified_count / len(batch_success_ids)) * 100 if batch_success_ids else 0
-                        logger.info(f"Batch {batch_index+1} verification: {verified_count}/{len(batch_success_ids)} events confirmed ({verification_pct:.1f}%)")
-                        
-                        if verified_count < len(batch_success_ids):
-                            logger.warning(f"Some events in batch {batch_index+1} could not be verified in the database")
-                    
-                    except Exception as e:
-                        logger.error(f"Error verifying batch {batch_index+1}: {str(e)}")
-                
-                # Update overall metrics
-                self.metrics['added'] += batch_metrics['added']
-                self.metrics['updated'] += batch_metrics['updated']
-                self.metrics['skipped'] += batch_metrics['skipped'] 
-                self.metrics['errors'] += batch_metrics['errors']
-                
-                # Log batch metrics
-                logger.info(f"Batch {batch_index+1} metrics: added={batch_metrics['added']}, updated={batch_metrics['updated']}, " +
-                           f"skipped={batch_metrics['skipped']}, errors={batch_metrics['errors']}")
-            
-            # Log final metrics
-            logger.info("Database storage complete. Final metrics:")
-            logger.info(f"  Added: {self.metrics['added']}")
-            logger.info(f"  Updated: {self.metrics['updated']}")
-            logger.info(f"  Skipped: {self.metrics['skipped']}")
-            logger.info(f"  Errors: {self.metrics['errors']}")
-            logger.info(f"  Total success rate: {((self.metrics['added'] + self.metrics['updated']) / len(db_events)) * 100:.1f}%")
-            
+        if not events:
+            logger.info("No events to store.")
             return self.metrics
-            
-        except Exception as e:
-            logger.error(f"Database operation failed: {str(e)}")
-            raise DatabaseError(f"Database operation failed: {str(e)}")
-    
+
+        logger.info(f"Storing {len(events)} events in database...")
+
+        # Reset metrics
+        batch_metrics = {
+            "added": 0,
+            "updated": 0,
+            "skipped": 0,
+            "errors": 0
+        }
+
+        # Process each event
+        for event in events:
+            try:
+                # Check if event already exists
+                exists, event_id = await self.check_for_existing_event(event, db)
+
+                if exists and event_id:
+                    # Update existing event
+                    logger.debug(f"Updating existing event: {event.name}")
+                    await update_event(
+                        db=db,
+                        event_id=event_id,
+                        event=event,
+                        perform_geocoding=False  # We'll handle geocoding separately
+                    )
+                    batch_metrics["updated"] += 1
+                else:
+                    # Create new event
+                    logger.debug(f"Creating new event: {event.name}")
+                    await create_event(
+                        db=db,
+                        event=event,
+                        perform_geocoding=False  # We'll handle geocoding separately
+                    )
+                    batch_metrics["added"] += 1
+
+            except Exception as e:
+                logger.error(f"Error processing event {event.name}: {str(e)}")
+                batch_metrics["errors"] += 1
+
+        # Update overall metrics
+        self.metrics["added"] += batch_metrics["added"]
+        self.metrics["updated"] += batch_metrics["updated"]
+        self.metrics["skipped"] += batch_metrics["skipped"]
+        self.metrics["errors"] += batch_metrics["errors"]
+
+        logger.info(f"Batch results: {batch_metrics}")
+        return batch_metrics
+
     def get_metrics(self) -> Dict[str, int]:
         """Get database operation metrics."""
         return self.metrics.copy()
+
+    async def check_for_existing_event(self, event: EventCreate, db: AsyncSession) -> Tuple[bool, Optional[int]]:
+        """
+        Check if an event already exists in the database.
+
+        Args:
+            event: Event to check
+            db: Database session
+
+        Returns:
+            Tuple of (exists, event_id)
+        """
+        logger.debug(f"Checking if event already exists: {event.name}")
+        
+        try:
+            # Search for events with the same name and date_start
+            # Use the API as defined in get_events function (without filters dict)
+            existing_events_result = await get_events(
+                db=db, 
+                limit=10,
+                location=event.name,  # Use the name as part of location search
+                date_from=event.date_start.isoformat() if event.date_start else None,
+                date_to=event.date_start.isoformat() if event.date_start else None
+            )
+            
+            # Ensure we have a list to work with
+            existing_events = []
+            if hasattr(existing_events_result, 'all'):
+                # If it's a SQLAlchemy result that needs to be converted to a list
+                existing_events = await existing_events_result.all()
+            elif isinstance(existing_events_result, list):
+                # If it's already a list (like in a test mock)
+                existing_events = existing_events_result
+            else:
+                # Handle unexpected return type
+                logger.warning(f"Unexpected result type from get_events: {type(existing_events_result)}")
+                return False, None
+            
+            if not existing_events:
+                logger.debug(f"No existing events found for {event.name}")
+                return False, None
+            
+            # Check each existing event for a match
+            for existing_event in existing_events:
+                if existing_event.name == event.name:
+                    # Found a match
+                    logger.debug(f"Found existing event: {existing_event.name} (ID: {existing_event.id})")
+                    return True, existing_event.id
+            
+            # No match found
+            return False, None
+            
+        except Exception as e:
+            logger.error(f"Error checking for existing event: {e}")
+            return False, None

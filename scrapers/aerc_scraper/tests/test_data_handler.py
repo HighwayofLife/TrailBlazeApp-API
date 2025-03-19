@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime
 
 from scrapers.aerc_scraper.data_handler import DataHandler
-from scrapers.schema import AERCEvent, EventSourceEnum, EventTypeEnum
+from app.schemas.event import AERCEvent, EventSourceEnum, EventTypeEnum
 
 def test_transform_and_validate_minimal():
     """Test transformation of minimal valid event data."""
@@ -21,9 +21,11 @@ def test_transform_and_validate_minimal():
     assert event.date_start == datetime(2024, 3, 20)
     assert event.source == EventSourceEnum.AERC
     assert event.event_type == EventTypeEnum.ENDURANCE
-    assert event.location.city == 'Test City'
-    assert event.location.state == 'ST'
-    assert event.location.country == 'USA'
+    assert event.location == 'Test City, ST'
+    # Check location_details field instead
+    assert event.location_details.city == 'Test City'
+    assert event.location_details.state == 'ST'
+    assert event.location_details.country == 'USA'
 
 def test_transform_and_validate_full():
     """Test transformation of complete event data."""
@@ -55,21 +57,20 @@ def test_transform_and_validate_full():
     assert event.region == 'Mountain'
     
     # Check location parsing
-    assert event.location.name == 'Ride Location'
-    assert event.location.city == 'Test City'
-    assert event.location.state == 'ST'
+    assert event.location == 'Ride Location - Test City, ST'
+    # Check location_details field instead
+    assert event.location_details is not None
+    assert event.location_details.city == 'Test City'
+    assert event.location_details.state == 'ST'
     
-    # Check contact info
-    assert len(event.contacts) == 1
-    contact = event.contacts[0]
-    assert contact.name == 'John Doe'
-    assert contact.email == 'john@example.com'
-    assert contact.phone == '1234567890'
-    assert contact.role == 'Ride Manager'
+    # Check manager info
+    assert event.ride_manager == 'John Doe'
+    assert event.manager_email == 'john@example.com'
+    assert event.manager_phone == '1234567890'
     
     # Check URLs
-    assert str(event.website_url) == 'https://example.com/'
-    assert str(event.registration_url) == 'https://example.com/flyer.pdf'
+    assert event.website == 'https://example.com/'
+    assert event.flyer_url == 'https://example.com/flyer.pdf'
     
     # Check distances
     assert len(event.distances) == 2
@@ -81,19 +82,19 @@ def test_parse_location():
     test_cases = [
         (
             "Ride Name - City, ST",
-            {'name': 'Ride Name', 'city': 'City', 'state': 'ST'}
+            {'city': 'City', 'state': 'ST', 'country': 'USA'}
         ),
         (
             "City, State",
-            {'name': None, 'city': 'City', 'state': 'State'}
+            {'city': 'City', 'state': 'State', 'country': 'USA'}
         ),
         (
             "Location Name",
-            {'name': 'Location Name', 'city': None, 'state': None}
+            {'city': 'Location Name', 'country': 'USA'}
         ),
         (
             "",
-            {'name': None, 'city': None, 'state': None}
+            {}
         ),
     ]
     
