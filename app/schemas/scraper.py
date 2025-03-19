@@ -11,7 +11,7 @@ class ScraperResponse(BaseModel):
     id: str
     name: str
     status: str
-    
+
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={
@@ -29,7 +29,7 @@ class ScraperRun(BaseModel):
     scraper_id: str
     status: str
     message: str
-    
+
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={

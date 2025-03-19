@@ -237,7 +237,6 @@ class HTMLParser:
             # Calculate ride days - either from date range or number of events
             if date_start and date_end and date_end != date_start:
                 # Convert string dates to datetime objects before subtraction
-                from datetime import datetime
                 try:
                     start_date_obj = datetime.strptime(date_start, '%Y-%m-%d')
                     end_date_obj = datetime.strptime(date_end, '%Y-%m-%d')

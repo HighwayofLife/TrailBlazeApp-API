@@ -17,7 +17,7 @@ import logging
 import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
-
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.event import EventCreate
@@ -121,7 +121,7 @@ class AERCScraperV2:
 
         except Exception as e:
             logger.error(f"Failed to run scraper: {str(e)}")
-            raise ScraperError(f"Scraper failed: {str(e)}")
+            raise ScraperError(f"Scraper failed: {str(e)}") from e
 
     async def _process_with_chunking(self, cleaned_html: str) -> Dict[str, Any]:
         """
@@ -155,7 +155,7 @@ class AERCScraperV2:
                 logger.info(f"Events found so far: {self.process_metrics['events_processed']}")
                 logger.info(f"Events stored so far: {self.process_metrics['events_stored']}")
 
-            except Exception as e:
+            except (ValueError, ValidationError, TypeError) as e:
                 self.process_metrics['chunk_errors'] += 1
                 logger.error(f"Error processing chunk {i+1}: {str(e)}")
                 continue
@@ -240,7 +240,7 @@ class AERCScraperV2:
                 'success_rate': self._calculate_success_rate(),
             }
 
-        except Exception as e:
+        except (ValueError, ValidationError, TypeError) as e:
             self.process_metrics['chunk_errors'] += 1
             logger.error(f"Error processing HTML: {str(e)}")
             raise
@@ -285,7 +285,7 @@ class AERCScraperV2:
             # Store events in database
             await self._store_events(valid_events)
 
-        except Exception as e:
+        except (ValueError, ValidationError, TypeError) as e:
             self.process_metrics['chunk_errors'] += 1
             logger.error(f"Error processing chunk {chunk_index+1}: {str(e)}")
 
@@ -317,7 +317,7 @@ class AERCScraperV2:
                 valid_events.append(event_create)
                 self.process_metrics['events_validated'] += 1
                 validation_results['valid'] += 1
-            except Exception as e:
+            except (ValueError, ValidationError, TypeError) as e:
                 self.process_metrics['validation_errors'] += 1
                 validation_results['invalid'] += 1
 
@@ -434,9 +434,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Configure logging
-    log_level = logging.DEBUG if args.debug else logging.INFO
+    LOG_LEVEL = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
-        level=log_level,
+        level=LOG_LEVEL,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[logging.StreamHandler()]
     )
