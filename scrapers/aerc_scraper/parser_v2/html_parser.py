@@ -37,14 +37,25 @@ class HTMLParser:
         """
         Parse AERC calendar HTML and extract structured event data.
 
+        This is the main entry point for the HTML parser. It processes the raw HTML
+        content from the AERC calendar and extracts structured data for each event,
+        combining multi-day events and validating against the AERCEvent schema.
+
         Args:
             html: Raw HTML content from the AERC calendar
 
         Returns:
-            List of raw event dictionaries
+            List of event dictionaries conforming to the AERCEvent schema
+
+        Raises:
+            ValueError: If the HTML content is invalid or empty
         """
         logger.info("Starting direct HTML parsing of AERC calendar data")
         raw_events = []
+
+        if not html or not html.strip():
+            logger.error("Empty HTML content provided")
+            raise ValueError("Empty HTML content provided")
 
         try:
             soup = BeautifulSoup(html, 'html.parser')
@@ -54,6 +65,9 @@ class HTMLParser:
             self.metrics['events_found'] = len(ride_rows)
 
             logger.info(f"Found {len(ride_rows)} potential events in HTML")
+
+            if not ride_rows:
+                logger.warning("No calendar rows found in HTML. The HTML structure may have changed.")
 
             # Extract data from each row
             for i, row in enumerate(ride_rows):
@@ -75,20 +89,47 @@ class HTMLParser:
 
                 except Exception as e:
                     self.metrics['parsing_errors'] += 1
-                    logger.error(f"Error parsing row {i}: {str(e)}")
+                    logger.error(f"Error parsing row {i}: {str(e)}", exc_info=self.debug_mode)
 
             # Combine events with the same ride_id
             events = self._combine_events_with_same_ride_id(raw_events)
 
-        except Exception as e:
-            logger.error(f"Failed to parse HTML: {str(e)}")
-            return []
+            # Validate each event against the AERCEvent schema
+            validated_events = []
+            for event in events:
+                try:
+                    # Validate and clean the event data
+                    clean_event = self.validate_event_data(event)
 
-        logger.info(f"Successfully extracted {len(events)} events from HTML")
+                    # Format dates if they're not already in ISO format
+                    if 'date_start' in clean_event and not clean_event['date_start'].startswith('20'):
+                        clean_event['date_start'] = self.format_date(clean_event['date_start'])
+
+                    if 'date_end' in clean_event and not clean_event['date_end'].startswith('20'):
+                        clean_event['date_end'] = self.format_date(clean_event['date_end'])
+
+                    validated_events.append(clean_event)
+                except Exception as e:
+                    self.metrics['validation_errors'] += 1
+                    logger.error(f"Validation error for event {event.get('name', 'Unknown')}: {str(e)}")
+                    # Include the event even if validation fails, but clean it
+                    try:
+                        # Remove None values at minimum
+                        clean_event = {k: v for k, v in event.items() if v is not None}
+                        validated_events.append(clean_event)
+                    except:
+                        # If cleaning fails, add the original event
+                        validated_events.append(event)
+
+        except Exception as e:
+            logger.error(f"Failed to parse HTML: {str(e)}", exc_info=self.debug_mode)
+            raise ValueError(f"HTML parsing failed: {str(e)}")
+
+        logger.info(f"Successfully extracted {len(validated_events)} events from HTML")
         logger.info(f"Link statistics: {self.metrics['website_links']} websites, "
                    f"{self.metrics['flyer_links']} flyers, {self.metrics['map_links']} maps")
 
-        return events
+        return validated_events
 
     def _combine_events_with_same_ride_id(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -1118,7 +1159,7 @@ class HTMLParser:
                 text = td.text.strip()
                 if 'control judge:' in text.lower():
                     # Extract the judge name that follows "Control Judge:"
-                    match = re.search(r'control judge:?\s*([^,\n]+)', text, re.IGNORECASE)
+                    match = re.search(r'control judge:?\s*([^,\n]+(?:,\s*[^,\n]+)*)', text, re.IGNORECASE)
                     if match:
                         judge_name = match.group(1).strip()
                         if judge_name:
@@ -1517,6 +1558,81 @@ class HTMLParser:
         }
 
     def get_metrics(self) -> Dict[str, Any]:
-        """Get parser metrics."""
+        """
+        Get parser metrics and statistics.
+
+        Returns a dictionary containing metrics about the parsing process,
+        including counts of events found, extracted, errors, etc.
+
+        Returns:
+            Dictionary of parser metrics
+        """
         return self.metrics
-        
+
+    def validate_event_data(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate and clean event data against the AERCEvent schema.
+
+        Args:
+            event: Raw event dictionary to validate
+
+        Returns:
+            Cleaned and validated event dictionary
+
+        Raises:
+            ValueError: If the event data is invalid or missing required fields
+        """
+        # Check required fields
+        required_fields = ['name', 'date_start', 'location']
+        missing_fields = [field for field in required_fields if not event.get(field)]
+
+        if missing_fields:
+            raise ValueError(f"Event missing required fields: {', '.join(missing_fields)}")
+
+        # Ensure event has the correct source
+        event['source'] = 'AERC'
+
+        # Ensure event has the correct event_type
+        if not event.get('event_type'):
+            event['event_type'] = 'endurance'
+
+        # Clean up None values
+        clean_event = {k: v for k, v in event.items() if v is not None}
+
+        # Ensure distances is a list
+        if 'distances' in clean_event and not isinstance(clean_event['distances'], list):
+            clean_event['distances'] = []
+
+        # Ensure control_judges is a list
+        if 'control_judges' in clean_event and not isinstance(clean_event['control_judges'], list):
+            clean_event['control_judges'] = []
+
+        return clean_event
+
+    def format_date(self, date_str: str) -> str:
+        """
+        Format date string to ISO format (YYYY-MM-DD).
+
+        Args:
+            date_str: Date string in various formats
+
+        Returns:
+            ISO formatted date string or original string if parsing fails
+        """
+        # Try various date formats
+        formats = [
+            '%b %d, %Y',  # Mar 28, 2025
+            '%B %d, %Y',  # March 28, 2025
+            '%m/%d/%Y',   # 03/28/2025
+            '%Y-%m-%d'    # 2025-03-28 (already ISO)
+        ]
+
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.strftime('%Y-%m-%d')
+            except ValueError:
+                continue
+
+        # If all parsing attempts fail, return original
+        return date_str
