@@ -28,7 +28,6 @@ MANIFEST
 .DS_Store
 cache/*
 logs/*
-.vscode/*
 .cursor/*
 .cursorignore
 
