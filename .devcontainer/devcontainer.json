@@ -1,0 +1,145 @@
+{
+  "name": "TrailBlazeApp API Development",
+  "dockerComposeFile": ["../docker-compose.yml", "docker-compose.extend.yml"],
+  "service": "app",
+  "workspaceFolder": "/app",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.black-formatter",
+        "ms-python.debugpy",
+        "donjayamanne.python-extension-pack",
+        "formulahendry.code-runner",
+        "github.copilot-chat",
+        "github.copilot",
+        "github.vscode-pull-request-github",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.vscode-python-envs",
+        "ms-python.flake8",
+        "ms-python.isort",
+        "njpwerner.autodocstring",
+        "streetsidesoftware.code-spell-checker",
+        "redhat.vscode-yaml",
+        "shd101wyy.markdown-preview-enhanced",
+        "vscodevim.vim",
+        "eamodio.gitlens",
+        "github.vscode-pull-request-github",
+        "ms-azuretools.vscode-docker",
+        "samuelcolvin.jinjahtml",
+        "tamasfe.even-better-toml",
+        "ms-vscode.makefile-tools",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg",
+        "humao.rest-client",
+        "yzhang.markdown-all-in-one"
+      ],
+      "settings": {
+        "python.linting.enabled": true,
+        "python.linting.flake8Enabled": true,
+        "python.linting.mypyEnabled": true,
+        "python.formatting.provider": "black",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.organizeImports": true
+        },
+        "vim.hlsearch": true,
+        "vim.insertModeKeyBindings": [
+          {
+            "before": [";", ";"],
+            "after": ["<Esc>"]
+          },
+          {
+            "before": ["<C-l>"],
+            "after": ["<Esc>"]
+          }
+        ],
+        "vim.normalModeKeyBindings": [
+          {
+            "before": ["<S-k>"],
+            "after": ["i", "<CR>", "<Esc>"]
+          }
+        ],
+        "vim.visualModeKeyBindingsNonRecursive": [
+          {
+            "before": [">"],
+            "commands": ["editor.action.indentLines"]
+          },
+          {
+            "before": ["<"],
+            "commands": ["editor.action.outdentLines"]
+          }
+        ],
+        "editor.inlineSuggest.enabled": true,
+        "editor.wrappingIndent": "indent",
+        "editor.wordWrap": "on",
+        "git.confirmSync": false,
+        "git.enableCommitSigning": true,
+        "github.copilot.chat.commitMessageGeneration.instructions": [
+          {
+            "text": "Use imperative mood, 50-character subject line\n * Separate body with blank line\n * Body explains WHAT was changed, not WHY nor HOW\n * Use bullet points for each change description.\n * Follow Conventional Commits standard"
+          }
+        ],
+        "github.copilot.enable": {
+          "*": true,
+          "plaintext": false,
+          "markdown": true,
+          "scminput": false
+        },
+        "chat.editor.fontSize": 16,
+        "github.copilot.editor.enableAutoCompletions": true,
+        "python.linting.flake8Path": "/usr/local/bin/flake8",
+        "python.formatting.blackPath": "/usr/local/bin/black",
+        "python.linting.mypyPath": "/usr/local/bin/mypy",
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter"
+        },
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "python.testing.nosetestsEnabled": false,
+        "python.testing.pytestPath": "pytest",
+        "python.analysis.typeCheckingMode": "basic",
+        "python.analysis.extraPaths": ["${workspaceFolder}"],
+        "sqltools.connections": [
+          {
+            "name": "TrailBlazeApp DB",
+            "driver": "PostgreSQL",
+            "server": "localhost",
+            "port": 5432,
+            "database": "trailblaze",
+            "username": "postgres",
+            "password": "postgres"
+          }
+        ],
+        "rest-client.environmentVariables": {
+          "$shared": {
+            "baseUrl": "http://localhost:8000"
+          }
+        }
+      }
+    }
+  },
+  "remoteUser": "root",
+  "postCreateCommand": "make setup-dev",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/python:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    }
+  },
+  "forwardPorts": [8000, 5432],
+  "portsAttributes": {
+    "8000": {
+      "label": "FastAPI",
+      "onAutoForward": "notify"
+    },
+    "5432": {
+      "label": "PostgreSQL",
+      "onAutoForward": "notify"
+    }
+  },
+  "shutdownAction": "stopCompose"
+}

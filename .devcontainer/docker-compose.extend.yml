@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      # Mount the source code for development
+      - ../:/app:cached
+      # Mount vs code extensions folder to keep extensions installed between sessions
+      - vscode-extensions:/root/.vscode-server/extensions
+      # Use a named volume for pip cache to speed up pip installs
+      - pip-cache:/root/.cache/pip
+      - ~/.gitconfig:/root/.gitconfig
+      # Mount the workspace file
+      - ~/github/highwayoflife/TrailBlazeApp.code-workspace:/app/TrailBlazeApp.code-workspace:ro
+    command: sleep infinity
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+
+volumes:
+  vscode-extensions:
+  pip-cache:
