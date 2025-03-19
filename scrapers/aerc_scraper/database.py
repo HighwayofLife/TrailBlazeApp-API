@@ -1,9 +1,13 @@
 """
-Database operations handler for storing and updating events.
+Database operations handler for AERC scraper.
+
+This module provides AERC-specific database operations for storing and
+retrieving event data. It uses the application's CRUD functions to ensure
+data consistency and schema validation.
 """
 
 import logging
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple, Optional, Union
 
 # Try to import AsyncSession, fallback to a type annotation string for linting
 try:
@@ -11,19 +15,24 @@ try:
 except ImportError:
     AsyncSession = 'AsyncSession'
 
-from app.schemas.event import EventCreate
+from app.schemas.event import EventCreate, AERCEvent
 from app.crud.event import create_event, get_events, update_event
-from .exceptions import DatabaseError
 from app.logging_config import get_logger
+from .exceptions import DatabaseError
 
 # Use the properly configured logger from app.logging_config
 logger = get_logger("scrapers.aerc_scraper.database")
 
 class DatabaseHandler:
-    """Handler for database operations."""
+    """
+    Handler for AERC-specific database operations.
+
+    This handler is responsible for storing and retrieving AERC event data
+    using the application's CRUD operations.
+    """
 
     def __init__(self):
-        """Initialize a new DatabaseHandler."""
+        """Initialize a new DatabaseHandler with empty metrics."""
         self.metrics = {
             "added": 0,
             "updated": 0,
@@ -31,26 +40,26 @@ class DatabaseHandler:
             "errors": 0
         }
 
-    async def store_events(self, events: List[EventCreate], db: AsyncSession) -> Dict[str, int]:
+    async def store_events(self, events: List[Union[EventCreate, AERCEvent, Dict[str, Any]]], db: AsyncSession) -> Dict[str, int]:
         """
-        Store a list of events in the database.
+        Store a list of AERC events in the database.
 
         Events are checked against existing entries to avoid duplicates.
 
         Args:
-            events: List of EventCreate objects to store
+            events: List of event objects or dictionaries to store
             db: Database session
 
         Returns:
-            Dictionary with operation metrics
+            Dictionary with operation metrics (added, updated, skipped, errors)
         """
         if not events:
             logger.info("No events to store.")
             return self.metrics
 
-        logger.info(f"Storing {len(events)} events in database...")
+        logger.info(f"Storing {len(events)} AERC events in database...")
 
-        # Reset metrics
+        # Reset batch metrics
         batch_metrics = {
             "added": 0,
             "updated": 0,
@@ -59,8 +68,15 @@ class DatabaseHandler:
         }
 
         # Process each event
-        for event in events:
+        for event_data in events:
             try:
+                # Convert dict to EventCreate if needed
+                if isinstance(event_data, dict):
+                    # Use the appropriate schema for AERC events
+                    event = AERCEvent.model_validate(event_data)
+                else:
+                    event = event_data
+
                 # Check if event already exists
                 exists, event_id = await self.check_for_existing_event(event, db)
 
@@ -85,7 +101,8 @@ class DatabaseHandler:
                     batch_metrics["added"] += 1
 
             except Exception as e:
-                logger.error(f"Error processing event {event.name}: {str(e)}")
+                event_name = getattr(event_data, 'name', str(event_data))
+                logger.error(f"Error processing event {event_name}: {str(e)}")
                 batch_metrics["errors"] += 1
 
         # Update overall metrics
@@ -98,7 +115,12 @@ class DatabaseHandler:
         return batch_metrics
 
     def get_metrics(self) -> Dict[str, int]:
-        """Get database operation metrics."""
+        """
+        Get database operation metrics.
+
+        Returns:
+            Dictionary with counts of database operations
+        """
         return self.metrics.copy()
 
     async def check_for_existing_event(self, event: EventCreate, db: AsyncSession) -> Tuple[bool, Optional[int]]:
@@ -113,45 +135,54 @@ class DatabaseHandler:
             Tuple of (exists, event_id)
         """
         logger.debug(f"Checking if event already exists: {event.name}")
-        
+
         try:
-            # Search for events with the same name and date_start
-            # Use the API as defined in get_events function (without filters dict)
-            existing_events_result = await get_events(
-                db=db, 
+            # Search by exact name and date - most reliable for identifying duplicates
+            existing_events_cursor = await get_events(
+                db=db,
                 limit=10,
-                location=event.name,  # Use the name as part of location search
-                date_from=event.date_start.isoformat() if event.date_start else None,
-                date_to=event.date_start.isoformat() if event.date_start else None
+                skip=0,
+                search=event.name,  # Use search parameter for partial matches
+                date_from=event.date_start.date().isoformat() if event.date_start else None,
+                date_to=event.date_start.date().isoformat() if event.date_start else None,
+                source="AERC"  # Only look at AERC events
             )
-            
-            # Ensure we have a list to work with
+
+            # Convert results to a list if needed
             existing_events = []
-            if hasattr(existing_events_result, 'all'):
-                # If it's a SQLAlchemy result that needs to be converted to a list
-                existing_events = await existing_events_result.all()
-            elif isinstance(existing_events_result, list):
-                # If it's already a list (like in a test mock)
-                existing_events = existing_events_result
+            if hasattr(existing_events_cursor, 'all'):
+                existing_events = await existing_events_cursor.all()
+            elif isinstance(existing_events_cursor, list):
+                existing_events = existing_events_cursor
             else:
-                # Handle unexpected return type
-                logger.warning(f"Unexpected result type from get_events: {type(existing_events_result)}")
+                logger.warning(f"Unexpected result type from get_events: {type(existing_events_cursor)}")
                 return False, None
-            
+
             if not existing_events:
-                logger.debug(f"No existing events found for {event.name}")
+                logger.debug(f"No existing AERC events found for {event.name}")
                 return False, None
-            
-            # Check each existing event for a match
+
+            # Check each event for a match - prioritize exact name match
             for existing_event in existing_events:
-                if existing_event.name == event.name:
-                    # Found a match
-                    logger.debug(f"Found existing event: {existing_event.name} (ID: {existing_event.id})")
+                # If ride_id exists and matches, that's the best identifier
+                if hasattr(event, 'ride_id') and event.ride_id and hasattr(existing_event, 'ride_id') and existing_event.ride_id == event.ride_id:
+                    logger.debug(f"Found existing event by ride_id: {existing_event.name} (ID: {existing_event.id})")
                     return True, existing_event.id
-            
+
+                # Otherwise check for name and date match
+                if existing_event.name == event.name:
+                    date_match = False
+                    if hasattr(existing_event, 'date_start') and hasattr(event, 'date_start'):
+                        if existing_event.date_start.date() == event.date_start.date():
+                            date_match = True
+
+                    if date_match:
+                        logger.debug(f"Found existing event by name and date: {existing_event.name} (ID: {existing_event.id})")
+                        return True, existing_event.id
+
             # No match found
             return False, None
-            
+
         except Exception as e:
-            logger.error(f"Error checking for existing event: {e}")
+            logger.error(f"Error checking for existing event: {e}", exc_info=True)
             return False, None

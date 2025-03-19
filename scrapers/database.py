@@ -1,34 +1,60 @@
-"""Shared database operations module."""
+"""
+Shared database operations module for scrapers.
 
-import asyncio
+This module provides database operations for all scrapers in a consistent way.
+It works as a wrapper around the application's CRUD operations to ensure data 
+consistency and proper validation against the shared event schema.
+
+Rather than implementing direct database operations, this handler delegates to
+the application's CRUD functions to maintain a single source of truth for
+database interactions.
+"""
+
 import logging
-from typing import Dict, List, Any, Optional
-from datetime import datetime
+from typing import Dict, List, Any, Tuple, Optional, Union
+
+# Import SQLAlchemy components
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncEngine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
-from sqlalchemy import select, update, insert, and_
-from sqlalchemy.sql import text
 
-from app.models.event import Event
+# Import application components
+from app.schemas.event import EventBase, EventCreate
+from app.crud.event import create_event, get_events, update_event
 from .exceptions import DatabaseError
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 class DatabaseHandler:
-    """Handles database operations with connection pooling."""
+    """
+    Handles database operations for scrapers with connection pooling.
     
+    This class provides a consistent interface for all scrapers to store
+    and retrieve event data while maintaining proper validation against
+    the central event schema.
+    """
+
     _engine: Optional[AsyncEngine] = None
     _session_factory = None
-    
+
     def __init__(self, db_url: Optional[str] = None):
-        """Initialize database handler."""
+        """
+        Initialize database handler with connection pooling.
+        
+        Args:
+            db_url: Optional database URL. If not provided, it will be
+                   retrieved from application settings.
+        
+        Raises:
+            ValueError: If database URL is not provided and not found in settings
+            DatabaseError: If database initialization fails
+        """
         settings = get_settings()
         self._db_url = db_url or settings.DATABASE_URL
         if not self._db_url:
             raise ValueError("Database URL not provided or found in config")
-        
+
         # Initialize engine
         try:
             self._engine = create_async_engine(
@@ -39,29 +65,38 @@ class DatabaseHandler:
                 pool_size=10,
                 max_overflow=20
             )
-            
+
             # Create async session factory
             self._session_factory = sessionmaker(
                 self._engine,
                 class_=AsyncSession,
                 expire_on_commit=False
             )
-            
+
             # Init metrics
             self._metrics = {
-                'inserts': 0,
-                'updates': 0,
+                'added': 0,
+                'updated': 0,
+                'skipped': 0,
                 'errors': 0
             }
-            
+
             logger.info("Database handler initialized")
-            
+
         except Exception as e:
             raise DatabaseError(f"Failed to initialize database: {str(e)}")
-    
+
     @classmethod
     def initialize(cls, database_url: str) -> None:
-        """Initialize database engine and session factory."""
+        """
+        Initialize shared database engine and session factory.
+        
+        Args:
+            database_url: Database connection string
+            
+        Raises:
+            DatabaseError: If initialization fails
+        """
         if not cls._engine:
             try:
                 cls._engine = create_async_engine(
@@ -80,318 +115,155 @@ class DatabaseHandler:
                 logger.info("Database connection pool initialized")
             except Exception as e:
                 raise DatabaseError(f"Failed to initialize database: {str(e)}")
-    
-    async def store_events(self, events: List[Any]) -> Dict[str, int]:
-        """Store events in the database.
+
+    async def store_events(self, events: List[Union[EventCreate, dict]]) -> Dict[str, int]:
+        """
+        Store events in the database using the application's CRUD operations.
+        
+        This method handles both new events and updates to existing events,
+        checking for duplicates based on event name and date.
         
         Args:
-            events: List of event data objects or dictionaries
-            
-        Returns:
-            Dict with counts of events added, updated, and skipped
-        """
-        session = self.get_session()  # Get a session but don't use async with
-        added = 0
-        updated = 0
-        skipped = 0
+            events: List of event data objects as EventCreate or dictionaries
         
+        Returns:
+            Dict with counts of events added, updated, skipped, and errors
+        """
+        batch_metrics = {
+            'added': 0,
+            'updated': 0,
+            'skipped': 0,
+            'errors': 0
+        }
+
+        if not events:
+            logger.info("No events to store")
+            return batch_metrics
+
+        logger.info(f"Storing {len(events)} events in database")
+        session = self.get_session()
+
         try:
-            async with session as s:  # Now use the async context manager correctly
+            async with session as s:
                 for event_data in events:
                     try:
+                        # Ensure event_data is an EventCreate object
+                        if isinstance(event_data, dict):
+                            # Convert dict to EventCreate
+                            event = EventCreate.model_validate(event_data)
+                        else:
+                            event = event_data
+                            
                         # Check if event already exists
-                        existing_event = await self._get_existing_event(s, event_data)
+                        exists, event_id = await self._check_for_existing_event(s, event)
                         
-                        if existing_event:
-                            # Update existing event
-                            await self._update_event(s, existing_event.id, event_data)
-                            updated += 1
-                            continue
-                        
-                        # Create new event
-                        await self._create_event(s, event_data)
-                        added += 1
-                        
+                        if exists and event_id:
+                            # Update existing event using app CRUD operation
+                            logger.debug(f"Updating existing event: {event.name}")
+                            await update_event(
+                                db=s,
+                                event_id=event_id,
+                                event=event,
+                                perform_geocoding=False  # Handle geocoding separately
+                            )
+                            batch_metrics['updated'] += 1
+                        else:
+                            # Create new event using app CRUD operation
+                            logger.debug(f"Creating new event: {event.name}")
+                            await create_event(
+                                db=s,
+                                event=event,
+                                perform_geocoding=False  # Handle geocoding separately
+                            )
+                            batch_metrics['added'] += 1
+                            
                     except Exception as e:
-                        logger.error(f"Error storing event: {str(e)}")
-                        skipped += 1
-                
+                        event_name = getattr(event_data, 'name', str(event_data))
+                        logger.error(f"Error storing event {event_name}: {str(e)}")
+                        batch_metrics['errors'] += 1
+                        
                 # Commit changes
                 await s.commit()
         except Exception as e:
             logger.error(f"Database session error: {str(e)}")
-            skipped += len(events)
+            batch_metrics['errors'] += len(events)
+
+        # Update overall metrics
+        self._metrics['added'] += batch_metrics['added']
+        self._metrics['updated'] += batch_metrics['updated']
+        self._metrics['skipped'] += batch_metrics['skipped']
+        self._metrics['errors'] += batch_metrics['errors']
         
-        self._metrics['inserts'] += added
-        self._metrics['updates'] += updated
-        self._metrics['errors'] += skipped
+        logger.info(f"Batch results: {batch_metrics}")
+        return batch_metrics
+
+    async def _check_for_existing_event(
+        self, 
+        session: AsyncSession, 
+        event: EventCreate
+    ) -> Tuple[bool, Optional[int]]:
+        """
+        Check if an event already exists in the database.
         
-        return {'added': added, 'updated': updated, 'skipped': skipped}
-    
-    async def _create_event(self, session: AsyncSession, data: Any) -> None:
-        """Create a new event record."""
+        Args:
+            session: Database session
+            event: Event to check
+            
+        Returns:
+            Tuple of (exists, event_id)
+        """
+        logger.debug(f"Checking if event already exists: {event.name}")
+        
         try:
-            # Create event based on data passed
-            if hasattr(data, 'model_dump'):  # Pydantic v2 model
-                data_dict = data.model_dump(exclude_unset=True)
-            elif hasattr(data, 'dict'):      # Pydantic v1 model
-                data_dict = data.dict(exclude_unset=True)
-            else:                           # Assuming it's a dict
-                data_dict = data
-            
-            # Create event based on whether we have a dictionary or an object
-            if isinstance(data_dict, dict):
-                event = Event(
-                    name=data_dict.get('name'),
-                    source=data_dict.get('source'),
-                    event_type=data_dict.get('event_type'),
-                    date_start=data_dict.get('date_start'),
-                    date_end=data_dict.get('date_end'),
-                    location=data_dict.get('location'),
-                    region=data_dict.get('region'),
-                    description=data_dict.get('description'),
-                    website=data_dict.get('website'),
-                    flyer_url=data_dict.get('flyer_url'),
-                    map_link=data_dict.get('map_link'),
-                    is_canceled=data_dict.get('is_canceled', False),
-                    external_id=data_dict.get('external_id'),
-                    ride_manager=data_dict.get('ride_manager'),
-                    manager_email=data_dict.get('manager_email'),
-                    manager_phone=data_dict.get('manager_phone'),
-                    distances=data_dict.get('distances'),
-                    latitude=data_dict.get('latitude'),
-                    longitude=data_dict.get('longitude'),
-                    event_details=data_dict.get('event_details'),
-                    updated_at=datetime.now()
-                )
-            else:
-                # For EventCreate or other objects with direct attribute access
-                event = Event(
-                    name=getattr(data, 'name', None),
-                    source=getattr(data, 'source', None),
-                    event_type=getattr(data, 'event_type', None),
-                    date_start=getattr(data, 'date_start', None),
-                    date_end=getattr(data, 'date_end', None),
-                    location=getattr(data, 'location', None),
-                    region=getattr(data, 'region', None),
-                    description=getattr(data, 'description', None),
-                    website=getattr(data, 'website', None),
-                    flyer_url=getattr(data, 'flyer_url', None),
-                    map_link=getattr(data, 'map_link', None),
-                    is_canceled=getattr(data, 'is_canceled', False),
-                    external_id=getattr(data, 'external_id', None),
-                    ride_manager=getattr(data, 'ride_manager', None),
-                    manager_email=getattr(data, 'manager_email', None),
-                    manager_phone=getattr(data, 'manager_phone', None),
-                    distances=getattr(data, 'distances', None),
-                    latitude=getattr(data, 'latitude', None),
-                    longitude=getattr(data, 'longitude', None),
-                    event_details=getattr(data, 'event_details', None),
-                    updated_at=datetime.now()
-                )
-            
-            session.add(event)
-            logger.debug(f"Created event: {event.name}")
-            
-        except Exception as e:
-            raise DatabaseError(f"Failed to create event: {str(e)}")
-    
-    async def _update_event(self, session: AsyncSession, event_id: int, data: Any) -> None:
-        """Update an existing event record."""
-        try:
-            # Get the event
-            event = await session.get(Event, event_id)
-            if not event:
-                raise DatabaseError(f"Event with ID {event_id} not found")
-            
-            # Convert data to dictionary if it's a Pydantic model
-            if hasattr(data, 'model_dump'):  # Pydantic v2 model
-                data_dict = data.model_dump(exclude_unset=True)
-            elif hasattr(data, 'dict'):      # Pydantic v1 model
-                data_dict = data.dict(exclude_unset=True)
-            else:                           # Assuming it's a dict
-                data_dict = data
-            
-            # Update the fields
-            if isinstance(data_dict, dict):
-                # Handle dictionary data
-                if 'name' in data_dict:
-                    event.name = data_dict['name']
-                if 'source' in data_dict:
-                    event.source = data_dict['source']
-                if 'event_type' in data_dict:
-                    event.event_type = data_dict['event_type']
-                if 'date_start' in data_dict:
-                    event.date_start = data_dict['date_start']
-                if 'date_end' in data_dict:
-                    event.date_end = data_dict['date_end']
-                if 'location' in data_dict:
-                    event.location = data_dict['location']
-                if 'region' in data_dict:
-                    event.region = data_dict['region']
-                if 'description' in data_dict:
-                    event.description = data_dict['description']
-                if 'website' in data_dict:
-                    event.website = data_dict['website']
-                if 'flyer_url' in data_dict:
-                    event.flyer_url = data_dict['flyer_url']
-                if 'map_link' in data_dict:
-                    event.map_link = data_dict['map_link']
-                if 'is_canceled' in data_dict:
-                    event.is_canceled = data_dict['is_canceled']
-                if 'external_id' in data_dict:
-                    event.external_id = data_dict['external_id']
-                if 'ride_manager' in data_dict:
-                    event.ride_manager = data_dict['ride_manager']
-                if 'manager_email' in data_dict:
-                    event.manager_email = data_dict['manager_email']
-                if 'manager_phone' in data_dict:
-                    event.manager_phone = data_dict['manager_phone']
-                if 'distances' in data_dict:
-                    event.distances = data_dict['distances']
-                if 'latitude' in data_dict:
-                    event.latitude = data_dict['latitude']
-                if 'longitude' in data_dict:
-                    event.longitude = data_dict['longitude']
-                if 'event_details' in data_dict:
-                    event.event_details = data_dict['event_details']
-            else:
-                # Handle object with attributes
-                if hasattr(data, 'name'):
-                    event.name = data.name
-                if hasattr(data, 'source'):
-                    event.source = data.source
-                if hasattr(data, 'event_type'):
-                    event.event_type = data.event_type
-                if hasattr(data, 'date_start'):
-                    event.date_start = data.date_start
-                if hasattr(data, 'date_end'):
-                    event.date_end = data.date_end
-                if hasattr(data, 'location'):
-                    event.location = data.location
-                if hasattr(data, 'region'):
-                    event.region = data.region
-                if hasattr(data, 'description'):
-                    event.description = data.description
-                if hasattr(data, 'website'):
-                    event.website = data.website
-                if hasattr(data, 'flyer_url'):
-                    event.flyer_url = data.flyer_url
-                if hasattr(data, 'map_link'):
-                    event.map_link = data.map_link
-                if hasattr(data, 'is_canceled'):
-                    event.is_canceled = data.is_canceled
-                if hasattr(data, 'external_id'):
-                    event.external_id = data.external_id
-                if hasattr(data, 'ride_manager'):
-                    event.ride_manager = data.ride_manager
-                if hasattr(data, 'manager_email'):
-                    event.manager_email = data.manager_email
-                if hasattr(data, 'manager_phone'):
-                    event.manager_phone = data.manager_phone
-                if hasattr(data, 'distances'):
-                    event.distances = data.distances
-                if hasattr(data, 'latitude'):
-                    event.latitude = data.latitude
-                if hasattr(data, 'longitude'):
-                    event.longitude = data.longitude
-                if hasattr(data, 'event_details'):
-                    event.event_details = data.event_details
-            
-            event.updated_at = datetime.now()
-            logger.debug(f"Updated event: {event.name}")
-            
-        except Exception as e:
-            raise DatabaseError(f"Failed to update event: {str(e)}")
-    
-    async def _get_or_create_location(
-        self,
-        session: AsyncSession,
-        data: Dict[str, Any]
-    ) -> None:
-        """Deprecated: Locations are now handled differently."""
-        logger.debug("_get_or_create_location is deprecated - locations are now stored as text")
-        return None
-    
-    async def _add_distances(
-        self,
-        session: AsyncSession,
-        event_id: int,
-        distances: List[Dict[str, Any]]
-    ) -> None:
-        """Deprecated: Distances are now stored in the events table directly."""
-        # This method is kept for backwards compatibility but doesn't do anything
-        logger.debug("_add_distances is deprecated - distances are stored directly in Event table")
-        pass
-    
-    async def _add_contacts(
-        self,
-        session: AsyncSession,
-        event_id: int,
-        contacts: List[Dict[str, Any]]
-    ) -> None:
-        """Deprecated: Contacts are now stored in the events table directly."""
-        # This method is kept for backwards compatibility but doesn't do anything
-        logger.debug("_add_contacts is deprecated - contacts are stored directly in Event table")
-        pass
-    
-    async def _get_existing_event(
-        self,
-        session: AsyncSession,
-        event_data: Any
-    ) -> Optional[Event]:
-        """Get an existing event by name and date."""
-        try:
-            # Extract event name and date_start from either a dict or an object
-            if isinstance(event_data, dict):
-                name = event_data.get('name')
-                date_start = event_data.get('date_start')
-                source = event_data.get('source', None)
-                external_id = event_data.get('external_id', None)
-            else:
-                name = getattr(event_data, 'name', None)
-                date_start = getattr(event_data, 'date_start', None)
-                source = getattr(event_data, 'source', None)
-                external_id = getattr(event_data, 'external_id', None)
-
-            if not name or not date_start:
-                logger.warning("Missing name or date_start in event data")
-                return None
-
-            # Try to find by external_id first if available
-            if external_id and source:
-                stmt = select(Event).where(
-                    and_(
-                        Event.external_id == external_id,
-                        Event.source == source
-                    )
-                )
-                result = await session.execute(stmt)
-                event = result.scalars().first()
-                if event:
-                    return event
-
-            # Otherwise find by name and date
-            stmt = select(Event).where(
-                and_(
-                    Event.name == name,
-                    Event.date_start == date_start
-                )
+            # Search for events with the same name and date_start
+            existing_events_result = await get_events(
+                db=session, 
+                limit=10,
+                name=event.name,
+                date_from=event.date_start.isoformat() if event.date_start else None,
+                date_to=event.date_start.isoformat() if event.date_start else None
             )
-            result = await session.execute(stmt)
-            return result.scalars().first()
+            
+            # Ensure we have a list to work with
+            existing_events = []
+            if hasattr(existing_events_result, 'all'):
+                # If it's a SQLAlchemy result that needs to be converted to a list
+                existing_events = await existing_events_result.all()
+            elif isinstance(existing_events_result, list):
+                # If it's already a list (like in a test mock)
+                existing_events = existing_events_result
+            else:
+                # Handle unexpected return type
+                logger.warning(f"Unexpected result type from get_events: {type(existing_events_result)}")
+                return False, None
+            
+            # Check for match by name and date
+            for existing_event in existing_events:
+                if existing_event.name == event.name:
+                    # For better matching, also check the date if available
+                    if existing_event.date_start.date() == event.date_start.date():
+                        logger.debug(f"Found existing event: {existing_event.name} (ID: {existing_event.id})")
+                        return True, existing_event.id
+            
+            # No match found
+            return False, None
             
         except Exception as e:
-            logger.error(f"Error getting existing event: {str(e)}")
-            return None
-    
-    def get_metrics(self) -> Dict[str, Any]:
-        """Get database operation metrics."""
-        metrics = self._metrics.copy()
-        return metrics
+            logger.error(f"Error checking for existing event: {e}")
+            return False, None
+
+    def get_metrics(self) -> Dict[str, int]:
+        """
+        Get database operation metrics.
+        
+        Returns:
+            Dictionary with counts of database operations
+        """
+        return self._metrics.copy()
 
     def get_session(self) -> AsyncSession:
-        """Get a database session.
+        """
+        Get a database session.
         
         Returns:
             An AsyncSession instance that can be used as a context manager
