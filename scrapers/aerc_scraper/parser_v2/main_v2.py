@@ -2,8 +2,8 @@
 """
 AERC Ride Calendar Scraper
 
-This module provides a robust scraper for AERC (American Endurance Ride Conference) 
-ride calendar events. It extracts event information from the AERC website and 
+This module provides a robust scraper for AERC (American Endurance Ride Conference)
+ride calendar events. It extracts event information from the AERC website and
 stores it in the application database.
 
 Key features:
@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
 class AERCScraperV2:
     """
     AERC ride calendar scraper with progressive processing and robust error handling.
-    
+
     This class implements a scraper for the AERC ride calendar that extracts event
-    data using HTML parsing. It processes data in manageable chunks to maintain 
+    data using HTML parsing. It processes data in manageable chunks to maintain
     memory efficiency and provide better error isolation.
     """
 
@@ -53,7 +53,7 @@ class AERCScraperV2:
     ):
         """
         Initialize the AERC scraper.
-        
+
         Args:
             settings: Configuration settings for the scraper
             session: Database session for storing data
@@ -96,14 +96,14 @@ class AERCScraperV2:
     async def scrape(self) -> Dict[str, Any]:
         """
         Run the AERC scraper and return results.
-        
-        This method fetches HTML from the AERC website, processes it either in 
+
+        This method fetches HTML from the AERC website, processes it either in
         chunks or as a whole, extracts event data, validates it against the schema,
         and stores it in the database.
-        
+
         Returns:
             Dict with scraping results and metrics
-            
+
         Raises:
             ScraperError: If the scraping process fails
         """
@@ -111,13 +111,13 @@ class AERCScraperV2:
             # Fetch and preprocess calendar page
             html = await self.network.fetch_calendar()
             cleaned_html = self.cleaner.clean(html)
-            
+
             if self.use_chunking:
                 # Process with chunking
                 return await self._process_with_chunking(cleaned_html)
-            else:
-                # Process entire HTML at once
-                return await self._process_without_chunking(cleaned_html)
+
+            # Process entire HTML at once
+            return await self._process_without_chunking(cleaned_html)
 
         except Exception as e:
             logger.error(f"Failed to run scraper: {str(e)}")
@@ -126,10 +126,10 @@ class AERCScraperV2:
     async def _process_with_chunking(self, cleaned_html: str) -> Dict[str, Any]:
         """
         Process HTML content in chunks for better memory management and error isolation.
-        
+
         Args:
             cleaned_html: Preprocessed HTML content
-            
+
         Returns:
             Dict with scraping results and metrics
         """
@@ -174,17 +174,17 @@ class AERCScraperV2:
     async def _process_without_chunking(self, cleaned_html: str) -> Dict[str, Any]:
         """
         Process the entire HTML content at once.
-        
+
         Args:
             cleaned_html: Preprocessed HTML content
-            
+
         Returns:
             Dict with scraping results and metrics
         """
         try:
             # Set metrics for single chunk processing
             self.process_metrics['total_chunks'] = 1
-            
+
             # Extract events from HTML using direct parser
             raw_events = self.html_parser.parse_html(cleaned_html)
             self.process_metrics['html_parser_used'] += 1
@@ -205,14 +205,29 @@ class AERCScraperV2:
             logger.info(f"Extracted {len(raw_events)} events from HTML")
 
             # Validate and transform events
-            valid_events, validation_results = await self._validate_events(raw_events)
-            
+            valid_events, _ = await self._validate_events(raw_events)
+
+            # After validation
+            self.process_metrics['events_validated'] += len(valid_events)
+            self.process_metrics['validation_errors'] += len(raw_events) - len(valid_events)
+
             # Store events in database
-            if valid_events:
-                storage_result = await self._store_events(valid_events)
-            else:
-                logger.warning("No valid events to store")
-                storage_result = {'added': 0, 'updated': 0, 'skipped': 0}
+            storage_result = await self.db.store_events(valid_events)
+
+            # After storage
+            events_stored = storage_result.get('added', 0)
+            events_updated = storage_result.get('updated', 0)
+            events_failed = storage_result.get('skipped', 0) + storage_result.get('errors', 0)
+
+            # Count both added and updated as "stored" for metrics
+            self.process_metrics['events_stored'] += (events_stored + events_updated)
+
+            if events_failed:
+                self.process_metrics['storage_errors'] += events_failed
+
+            # Log results
+            logger.info(f"Validation results: {len(valid_events)} valid, {len(raw_events) - len(valid_events)} invalid")
+            logger.info(f"Storage results: {events_stored} inserted, {events_updated} updated, {events_failed} failed")
 
             # Log final summary
             self._log_final_summary()
@@ -224,7 +239,7 @@ class AERCScraperV2:
                 'chunks_processed': 1,
                 'success_rate': self._calculate_success_rate(),
             }
-            
+
         except Exception as e:
             self.process_metrics['chunk_errors'] += 1
             logger.error(f"Error processing HTML: {str(e)}")
@@ -233,7 +248,7 @@ class AERCScraperV2:
     async def _process_chunk(self, chunk: str, chunk_index: int) -> None:
         """
         Process a single HTML chunk: extract, validate, and store events.
-        
+
         Args:
             chunk: HTML chunk to process
             chunk_index: Index of the chunk for logging
@@ -254,7 +269,7 @@ class AERCScraperV2:
             logger.info(f"Extracted {chunk_event_count} events from chunk {chunk_index+1}")
 
             # Validate and transform events from this chunk
-            valid_events, validation_results = await self._validate_events(raw_events)
+            valid_events, _ = await self._validate_events(raw_events)
 
             if len(valid_events) < chunk_event_count:
                 logger.warning(f"{chunk_event_count - len(valid_events)} events failed validation in chunk {chunk_index+1}")
@@ -277,10 +292,10 @@ class AERCScraperV2:
     async def _validate_events(self, raw_events: List[Dict[str, Any]]) -> Tuple[List[EventCreate], Dict[str, int]]:
         """
         Validate and transform raw event data to EventCreate objects.
-        
+
         Args:
             raw_events: List of raw event data dictionaries
-            
+
         Returns:
             Tuple of (valid_events, validation_results)
         """
@@ -290,50 +305,40 @@ class AERCScraperV2:
             'valid': 0,
             'invalid': 0
         }
-        
+
         for raw_event in raw_events:
             try:
                 # First validate against AERC schema
                 aerc_event = validate_aerc_event(raw_event)
-                
+
                 # Then convert to EventCreate format for storage
                 event_create = DataHandler.to_event_create(aerc_event)
-                
+
                 valid_events.append(event_create)
                 self.process_metrics['events_validated'] += 1
                 validation_results['valid'] += 1
             except Exception as e:
                 self.process_metrics['validation_errors'] += 1
                 validation_results['invalid'] += 1
-                
+
                 event_name = raw_event.get('rideName', 'Unknown event')
                 logger.warning(f"Event validation failed for '{event_name}': {str(e)}")
-        
+
         return valid_events, validation_results
 
     async def _store_events(self, valid_events: List[EventCreate]) -> Dict[str, int]:
         """
         Store validated events in the database.
-        
+
         Args:
             valid_events: List of validated EventCreate objects
-            
+
         Returns:
             Dict with storage results
         """
         try:
-            # Check if the store_events method expects a db session parameter
-            # Inspect the actual implementation to determine the right call
-            db_handler_class = self.db.__class__
-            store_events_signature = getattr(db_handler_class, 'store_events', None)
-            
-            # Call with or without session parameter based on the implementation
-            if hasattr(store_events_signature, '__code__') and 'session' in store_events_signature.__code__.co_varnames:
-                # The method expects a session parameter
-                storage_result = await self.db.store_events(valid_events, db=self.session)
-            else:
-                # Default behavior - pass just the events
-                storage_result = await self.db.store_events(valid_events)
+            # Store events in database
+            storage_result = await self.db.store_events(valid_events)
 
             events_stored = storage_result.get('added', 0)
             events_updated = storage_result.get('updated', 0)
@@ -358,7 +363,7 @@ class AERCScraperV2:
     def _log_event_details(self, events: List[EventCreate]) -> None:
         """
         Log details about events for debugging.
-        
+
         Args:
             events: List of event objects to log
         """
@@ -375,10 +380,10 @@ class AERCScraperV2:
     def _log_final_summary(self) -> None:
         """Log the final summary of the scraping process."""
         logger.info("AERC Calendar Scraping Summary:")
-        
+
         if self.use_chunking:
             logger.info(f"Chunks: {self.process_metrics['chunks_processed']}/{self.process_metrics['total_chunks']} processed")
-        
+
         logger.info(f"Events: {self.process_metrics['events_processed']} found, {self.process_metrics['events_validated']} validated, {self.process_metrics['events_stored']} stored")
         logger.info(f"Success rate: {self._calculate_success_rate():.1f}%")
         logger.info(f"Errors: {self.process_metrics['chunk_errors']} chunk errors, {self.process_metrics['validation_errors']} validation errors, {self.process_metrics['storage_errors']} storage errors")
@@ -386,7 +391,7 @@ class AERCScraperV2:
     def _calculate_success_rate(self) -> float:
         """
         Calculate the success rate of the scraping process.
-        
+
         Returns:
             Percentage of events successfully stored
         """
@@ -396,18 +401,18 @@ class AERCScraperV2:
         return (self.process_metrics['events_stored'] / self.process_metrics['events_processed']) * 100
 
 async def run_scraper(
-    settings: ScraperSettings, 
+    settings: ScraperSettings,
     session: AsyncSession,
     use_chunking: bool = True
 ) -> Dict[str, Any]:
     """
     Run the AERC scraper with the specified settings.
-    
+
     Args:
         settings: Scraper configuration settings
         session: Database session
         use_chunking: Whether to process HTML in chunks
-        
+
     Returns:
         Dict with scraping results
     """
@@ -450,7 +455,7 @@ if __name__ == "__main__":
         async with async_session() as session:
             # Run scraper
             scraper = AERCScraperV2(
-                settings, 
+                settings,
                 session,
                 use_chunking=not args.no_chunks
             )
